@@ -1,0 +1,74 @@
+name: Docs
+
+on:
+  push:
+    branches: [master, main, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; let in-flight runs finish rather than
+# racing a newer one, since deploy-docs only ever runs on the default branch.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # Runs on every push and PR: builds the FORD docs and fails the job if
+  # FORD emits any warning -- a real regression gate, not a formality (see
+  # FORTVSH's own docs.yml for the prior incident that motivated this).
+  # FORD only parses source text, not compiled code, so this does NOT need
+  # FORTVSH built/installed first, unlike ci.yml.
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install FORD and Graphviz
+        run: |
+          pip install ford
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends graphviz
+
+      - name: Build docs
+        run: ford project.md 2>&1 | tee ford_output.log
+
+      - name: Fail on FORD warnings
+        run: |
+          if grep -qi "warning" ford_output.log; then
+            echo "::error::FORD emitted warning(s) -- see the 'Build docs' step output above."
+            exit 1
+          fi
+
+      - name: Upload docs artifact (for Pages deploy step)
+        if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  # Only publishes on pushes to the default branch -- other branches and PRs
+  # get the build+warning check above, but never redeploy the live site.
+  deploy-docs:
+    needs: build-docs
+    if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

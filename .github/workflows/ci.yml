@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout MHD-VSH
+        uses: actions/checkout@v4
+        with:
+          path: mhd-vsh
+
+      - name: Checkout FORTVSH (dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: justinelfritz/FORTVSH
+          path: fortvsh-src
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gfortran cmake make pkg-config python3 python3-pip liblapack-dev
+          pip install --user matplotlib numpy
+          gfortran --version
+          cmake --version
+
+      - name: Build and install FORTVSH
+        run: |
+          cmake -B fortvsh-build -S fortvsh-src \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/fortvsh-install"
+          cmake --build fortvsh-build -j"$(nproc)"
+          cmake --install fortvsh-build
+
+      - name: Configure MHD-VSH
+        run: |
+          cmake -B mhd-vsh/build -S mhd-vsh \
+            -DCMAKE_PREFIX_PATH="${{ github.workspace }}/fortvsh-install"
+
+      - name: Build
+        # Also produces build/artifacts/**/plots/*.png (uploaded below) --
+        # the diffusion energy-budget plot is a normal build target (see
+        # CMakeLists.txt's "Artifacts" section), not a separate step.
+        run: cmake --build mhd-vsh/build -j"$(nproc)"
+
+      - name: Test
+        # cd + ctest, not `ctest --test-dir` -- --test-dir requires CMake
+        # >=3.20 and is a silent no-op on older CMake, including this
+        # project's stated 3.14 floor.
+        run: cd mhd-vsh/build && ctest --output-on-failure
+
+      - name: Upload artifacts (data + plots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mhd-vsh-artifacts
+          path: mhd-vsh/build/artifacts/**
+          if-no-files-found: ignore

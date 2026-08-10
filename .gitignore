@@ -1,0 +1,19 @@
+# CMake build artefacts
+/build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+*.mod
+
+# Vendored/pre-built FORTVSH copy -- not tracked, CI builds FORTVSH from
+# source (see .github/workflows/ci.yml); local builds point
+# -DCMAKE_PREFIX_PATH at their own FORTVSH install.
+/.deps/
+
+# Generated FORD API documentation (regenerate with: ford project.md)
+/docs/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
