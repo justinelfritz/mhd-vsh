@@ -25,11 +25,33 @@ cd build && ctest --output-on-failure
 
 ### Regime drivers
 
-Each regime is its own executable (no runtime dispatch):
+Each regime is its own executable (no runtime dispatch); a regime can
+have more than one driver (e.g. Hall's fixed- vs. dynamic-`dt` variants):
 
 ```bash
 ./build/mhdvsh_diffusion [output_data_file]
+./build/mhdvsh_hall [energy_data] [energy_by_l_data] [checkpoint_path] [resume_path]
+./build/mhdvsh_hall_adaptive [output_data_file]
 ```
+
+`mhdvsh_hall`'s checkpoint/resume args are optional and purely additive
+-- see its own header comment for the exact semantics (`N_STEPS` is
+always the total target step count, not "how many more to run").
+
+### TOV / crust-EOS solver
+
+`mhdvsh_tov` is not a regime driver -- it solves a single neutron star's
+structure (ported from an existing F77 TOV+crust-EOS solver) and prints/
+writes its radial `n_e(r)`/`eta(r)`/`f_H(r)` profile, which the Hall
+regime's optional `ETA_PROFILE`/`F_HALL_PROFILE` arguments can consume
+instead of a uniform scalar:
+
+```bash
+./build/mhdvsh_tov [eos_table_path] [output_data_file]
+```
+
+EOS tables live in `data/eos/`. `scripts/plot_eos_profile.py` plots a
+run's output.
 
 ## Generating documentation
 
@@ -44,9 +66,13 @@ Writes to `docs/`; open `docs/index.html`.
 
 - `src/core/` -- regime-agnostic building blocks: grids, radial
   operators, transforms, boundary conditions, the linear solver, the
-  regime/timestepper contract, diagnostics.
+  regime/timestepper contract, diagnostics, units, checkpoint/restart,
+  plus a ported TOV + crust-EOS/conductivity solver (`tov_solver.f90`,
+  `eos_table.f90`, `crust_conductivity.f90`, `ode_integrator.f90`).
 - `src/regimes/<name>/` -- one module per physics regime, each owning
   its own PDE assembly.
-- `app/` -- one driver program per regime.
+- `app/` -- driver programs: one or more per regime, plus `mhdvsh_tov`
+  (the TOV/EOS solver -- not itself a regime).
+- `data/eos/` -- EOS table data files the TOV solver reads.
 - `test/` -- CTest suite, one executable per module/regime.
 - `scripts/` -- plotting scripts consuming `build/artifacts/` data.

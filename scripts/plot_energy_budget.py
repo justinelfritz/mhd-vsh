@@ -61,9 +61,25 @@ def main():
                  linewidth=2, solid_capstyle="round",
                  label=name.replace("_", " "))
 
-    ax.set_xlabel("t", color=TEXT_SECONDARY)
-    ax.set_ylabel("energy", color=TEXT_SECONDARY)
-    ax.set_title("Diffusion regime: energy budget vs time", color=TEXT_PRIMARY,
+    # No manual y-limit: columns are now in physical cgs units (erg /
+    # erg/s, per src/core/units.f90's B=1e12 G, length=km, time=yr
+    # convention), so a fixed clip tuned for the old O(1) code-unit
+    # numbers would hide real data rather than just a transient spike.
+
+    # Regime name inferred from the data path's own artifacts/<regime>/...
+    # convention (CMakeLists.txt's "Artifacts" section) rather than
+    # hardcoded -- this script is shared across regimes (diffusion,
+    # hall, ...) and was previously mislabeled "Diffusion regime" no
+    # matter which regime actually produced the data.
+    path_parts = Path(data_path).parts
+    if "artifacts" in path_parts:
+        regime_name = path_parts[path_parts.index("artifacts") + 1].capitalize()
+    else:
+        regime_name = "Regime"
+
+    ax.set_xlabel("t [yr]", color=TEXT_SECONDARY)
+    ax.set_ylabel("energy [erg] / rate [erg/s]", color=TEXT_SECONDARY)
+    ax.set_title(f"{regime_name} regime: energy budget vs time", color=TEXT_PRIMARY,
                  fontsize=12, fontweight="bold", loc="left")
 
     ax.grid(True, color=GRID, linewidth=0.8)

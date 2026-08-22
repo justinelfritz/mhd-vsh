@@ -62,14 +62,20 @@ CONTAINS
 !>   supported here).
 !> @param OPS Radial derivative operators built on RGRID.
 !> @param LMAX Maximum spherical-harmonic degree to evolve.
-!> @param ETA Resistivity (diffusivity) coefficient.
+!> @param ETA Resistivity (diffusivity) coefficient, used uniformly
+!>   across all radial rows unless ETA_PROFILE is present.
 !> @param DT Fixed timestep (must match every DT passed to
 !>   DIFFUSION_ADVANCE for this initialization to remain valid).
-SUBROUTINE DIFFUSION_INIT(RGRID, OPS, LMAX, ETA, DT)
+!> @param ETA_PROFILE Optional per-radial-row resistivity (size RGRID%N,
+!>   e.g. from CRUST_CONDUCTIVITY::ETA_AND_F_HALL_AT), overriding ETA
+!>   row-by-row when present. Absent, behavior is bit-identical to the
+!>   uniform-ETA case (test_diffusion_regime.f90 confirms this).
+SUBROUTINE DIFFUSION_INIT(RGRID, OPS, LMAX, ETA, DT, ETA_PROFILE)
   TYPE(RADIAL_GRID_T),     INTENT(IN) :: RGRID
   TYPE(RADIAL_OPERATOR_T), INTENT(IN) :: OPS
   INTEGER(KIND=i4),        INTENT(IN) :: LMAX
   REAL(KIND=dp),           INTENT(IN) :: ETA, DT
+  REAL(KIND=dp), OPTIONAL, INTENT(IN) :: ETA_PROFILE(:)
   REAL(KIND=dp), ALLOCATABLE :: A_PHI(:,:), A_PSI(:,:)
   INTEGER(KIND=i4) :: L, N, I
 
@@ -83,7 +89,13 @@ SUBROUTINE DIFFUSION_INIT(RGRID, OPS, LMAX, ETA, DT)
   DO L = 0, LMAX
     A_PHI = OPS%D2
     CALL ADD_CURVATURE_TERM(A_PHI, L, RGRID)
-    A_PHI = -DT*ETA*A_PHI
+    IF (PRESENT(ETA_PROFILE)) THEN
+      DO I = 1, N
+        A_PHI(I,:) = -DT*ETA_PROFILE(I)*A_PHI(I,:)
+      END DO
+    ELSE
+      A_PHI = -DT*ETA*A_PHI
+    END IF
     DO I = 1, N
       A_PHI(I,I) = A_PHI(I,I) + 1.0_dp
     END DO

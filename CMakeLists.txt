@@ -68,6 +68,13 @@ add_library(mhdvsh_core STATIC
   src/core/regime_interface.f90
   src/core/timestepper.f90
   src/core/field_diagnostics.f90
+  src/core/units.f90
+  src/core/hall_induction.f90
+  src/core/io_checkpoint.f90
+  src/core/ode_integrator.f90
+  src/core/eos_table.f90
+  src/core/tov_solver.f90
+  src/core/crust_conductivity.f90
 )
 set_target_properties(mhdvsh_core PROPERTIES
   Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
@@ -86,6 +93,9 @@ endif()
 # executable(s) below, per-regime-executable, no runtime dispatch (see
 # REGIME_INTERFACE/TIMESTEPPER).
 set(MHDVSH_DIFFUSION_SOURCES src/regimes/diffusion/diffusion_regime.f90)
+set(MHDVSH_HALL_SOURCES
+  src/regimes/diffusion/diffusion_regime.f90
+  src/regimes/hall/hall_regime.f90)
 
 # ── App ──────────────────────────────────────────────────────────────────────
 add_executable(mhdvsh_run app/mhdvsh_run.f90)
@@ -99,6 +109,61 @@ set_target_properties(mhdvsh_diffusion PROPERTIES
   Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
 )
 target_link_libraries(mhdvsh_diffusion PRIVATE mhdvsh_core)
+
+# TOV stellar-structure driver (see src/core/tov_solver.f90,
+# eos_table.f90, crust_conductivity.f90 -- ported from ~/Desktop/EOSNS/).
+# Reads the EOS table from data/eos/ by default, path relative to the
+# working directory the driver is run from (matching how mhdvsh_diffusion
+# et al. take their data-output path as a plain CLI argument, not an
+# install-time-resolved path).
+add_executable(mhdvsh_tov app/mhdvsh_tov.f90)
+set_target_properties(mhdvsh_tov PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(mhdvsh_tov PRIVATE mhdvsh_core)
+
+# Combined resistive+Hall regime -- the "primary interest" case (see
+# hall_regime.f90's own header for the splitting/BC design). Unlike the
+# Stage 2 stability harness, this is a real regime now: in ALL/ctest,
+# mirroring diffusion's wiring exactly.
+add_executable(mhdvsh_hall ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall.f90)
+set_target_properties(mhdvsh_hall PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(mhdvsh_hall PRIVATE mhdvsh_core)
+
+# Same regime, dynamic Hall-CFL-limited dt instead of mhdvsh_hall's
+# fixed one (see hall_regime.f90's HALL_COMPUTE_DT/HALL_SET_DT and
+# timestepper.f90's RUN_ADAPTIVE).
+add_executable(mhdvsh_hall_adaptive ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall_adaptive.f90)
+set_target_properties(mhdvsh_hall_adaptive PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(mhdvsh_hall_adaptive PRIVATE mhdvsh_core)
+
+# Stage 2 Hall stability experiment (see .claude/plans/i-would-like-to-
+# quizzical-comet.md) -- deliberately NOT added to the default ALL
+# target or wired to any artifact/plot command: this is an exploratory
+# harness whose parameters (dt, Lmax, F_Hall, ...) are expected to keep
+# changing between runs, unlike diffusion's fixed regression-style demo.
+# Build/run explicitly: `cmake --build . --target mhdvsh_hall_stability_experiment`.
+add_executable(mhdvsh_hall_stability_experiment EXCLUDE_FROM_ALL
+  app/mhdvsh_hall_stability_experiment.f90)
+set_target_properties(mhdvsh_hall_stability_experiment PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(mhdvsh_hall_stability_experiment PRIVATE mhdvsh_core)
+
+# Combined-regime dt-stability sweep (see mhdvsh_hall_dt_sweep.f90's own
+# header) -- same exploratory-harness treatment as
+# mhdvsh_hall_stability_experiment above: not in ALL, parameters (dt,
+# tmax) passed on the command line per invocation, not baked in.
+add_executable(mhdvsh_hall_dt_sweep EXCLUDE_FROM_ALL
+  ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall_dt_sweep.f90)
+set_target_properties(mhdvsh_hall_dt_sweep PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(mhdvsh_hall_dt_sweep PRIVATE mhdvsh_core)
 
 # ── Artifacts (plots/data regenerated automatically with every build) ───────
 # Directory convention: artifacts/<regime>/<diagnostic>/{data,plots}/ -- one
@@ -140,6 +205,42 @@ if(Python3_Interpreter_FOUND)
 
   add_custom_target(diffusion_energy_budget_plot ALL
     DEPENDS ${MHDVSH_DIFFUSION_ENERGY_PLOT}
+  )
+
+  set(MHDVSH_HALL_ENERGY_DATA
+      ${MHDVSH_ARTIFACTS_DIR}/hall/energy_budget/data/energy_budget.dat)
+  set(MHDVSH_HALL_ENERGY_PLOT
+      ${MHDVSH_ARTIFACTS_DIR}/hall/energy_budget/plots/energy_budget.png)
+
+  add_custom_command(
+    OUTPUT ${MHDVSH_HALL_ENERGY_DATA}
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+            ${MHDVSH_ARTIFACTS_DIR}/hall/energy_budget/data
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+            ${MHDVSH_ARTIFACTS_DIR}/hall/energy_budget/plots
+    COMMAND mhdvsh_hall ${MHDVSH_HALL_ENERGY_DATA}
+    DEPENDS mhdvsh_hall
+    COMMENT "Running combined resistive+Hall regime to produce energy-budget time series"
+    VERBATIM
+  )
+
+  add_custom_command(
+    OUTPUT ${MHDVSH_HALL_ENERGY_PLOT}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/plot_energy_budget.py
+            ${MHDVSH_HALL_ENERGY_DATA} ${MHDVSH_HALL_ENERGY_PLOT}
+    DEPENDS ${MHDVSH_HALL_ENERGY_DATA} ${CMAKE_SOURCE_DIR}/scripts/plot_energy_budget.py
+    COMMENT "Plotting combined resistive+Hall regime energy budget"
+    VERBATIM
+  )
+
+  # NOT in ALL, unlike diffusion's equivalent target: this driver's
+  # LMAX=30/N_SUB=10 configuration costs ~5 minutes to run (the price of
+  # a real Hall cascade at this resolution), vs. diffusion's sub-second
+  # implicit solve -- forcing that into every `cmake --build .` would be
+  # a surprising, unwelcome cost for routine development. Build/run
+  # explicitly: `cmake --build . --target hall_energy_budget_plot`.
+  add_custom_target(hall_energy_budget_plot
+    DEPENDS ${MHDVSH_HALL_ENERGY_PLOT}
   )
 else()
   message(STATUS "Python3 interpreter not found -- skipping artifact plot targets")
@@ -188,9 +289,66 @@ set_target_properties(test_field_diagnostics PROPERTIES
 target_link_libraries(test_field_diagnostics PRIVATE mhdvsh_core)
 add_test(NAME field_diagnostics COMMAND test_field_diagnostics)
 
+add_executable(test_units test/test_units.f90)
+set_target_properties(test_units PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(test_units PRIVATE mhdvsh_core)
+add_test(NAME units COMMAND test_units)
+
+add_executable(test_hall_induction test/test_hall_induction.f90)
+set_target_properties(test_hall_induction PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(test_hall_induction PRIVATE mhdvsh_core)
+add_test(NAME hall_induction COMMAND test_hall_induction)
+
+add_executable(test_io_checkpoint test/test_io_checkpoint.f90)
+set_target_properties(test_io_checkpoint PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(test_io_checkpoint PRIVATE mhdvsh_core)
+add_test(NAME io_checkpoint COMMAND test_io_checkpoint)
+
 add_executable(test_diffusion_regime ${MHDVSH_DIFFUSION_SOURCES} test/test_diffusion_regime.f90)
 set_target_properties(test_diffusion_regime PROPERTIES
   Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
 )
 target_link_libraries(test_diffusion_regime PRIVATE mhdvsh_core)
 add_test(NAME diffusion_regime COMMAND test_diffusion_regime)
+
+add_executable(test_hall_regime ${MHDVSH_HALL_SOURCES} test/test_hall_regime.f90)
+set_target_properties(test_hall_regime PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(test_hall_regime PRIVATE mhdvsh_core)
+add_test(NAME hall_regime COMMAND test_hall_regime)
+
+# TOV/EOS port tests (see src/core/eos_table.f90, tov_solver.f90,
+# crust_conductivity.f90) -- test_eos_table and test_tov_solver read
+# data/eos/lowd-eos.ja.tab via a path relative to the source root, so
+# their WORKING_DIRECTORY is set explicitly (unlike every other test
+# here, none of which touch the filesystem).
+add_executable(test_eos_table test/test_eos_table.f90)
+set_target_properties(test_eos_table PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(test_eos_table PRIVATE mhdvsh_core)
+add_test(NAME eos_table COMMAND test_eos_table WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(test_tov_solver test/test_tov_solver.f90)
+set_target_properties(test_tov_solver PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(test_tov_solver PRIVATE mhdvsh_core)
+add_test(NAME tov_solver COMMAND test_tov_solver WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# test_crust_conductivity's reference values were produced independently
+# (see its own header) from the original, unmodified potekhinc.f -- it
+# reads no files itself, no WORKING_DIRECTORY needed.
+add_executable(test_crust_conductivity test/test_crust_conductivity.f90)
+set_target_properties(test_crust_conductivity PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+)
+target_link_libraries(test_crust_conductivity PRIVATE mhdvsh_core)
+add_test(NAME crust_conductivity COMMAND test_crust_conductivity)
