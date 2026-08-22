@@ -100,13 +100,13 @@ set(MHDVSH_HALL_SOURCES
 # ── App ──────────────────────────────────────────────────────────────────────
 add_executable(mhdvsh_run app/mhdvsh_run.f90)
 set_target_properties(mhdvsh_run PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_run"
 )
 target_link_libraries(mhdvsh_run PRIVATE mhdvsh_core)
 
 add_executable(mhdvsh_diffusion ${MHDVSH_DIFFUSION_SOURCES} app/mhdvsh_diffusion.f90)
 set_target_properties(mhdvsh_diffusion PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_diffusion"
 )
 target_link_libraries(mhdvsh_diffusion PRIVATE mhdvsh_core)
 
@@ -118,7 +118,7 @@ target_link_libraries(mhdvsh_diffusion PRIVATE mhdvsh_core)
 # install-time-resolved path).
 add_executable(mhdvsh_tov app/mhdvsh_tov.f90)
 set_target_properties(mhdvsh_tov PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_tov"
 )
 target_link_libraries(mhdvsh_tov PRIVATE mhdvsh_core)
 
@@ -128,7 +128,7 @@ target_link_libraries(mhdvsh_tov PRIVATE mhdvsh_core)
 # mirroring diffusion's wiring exactly.
 add_executable(mhdvsh_hall ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall.f90)
 set_target_properties(mhdvsh_hall PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall"
 )
 target_link_libraries(mhdvsh_hall PRIVATE mhdvsh_core)
 
@@ -137,7 +137,7 @@ target_link_libraries(mhdvsh_hall PRIVATE mhdvsh_core)
 # timestepper.f90's RUN_ADAPTIVE).
 add_executable(mhdvsh_hall_adaptive ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall_adaptive.f90)
 set_target_properties(mhdvsh_hall_adaptive PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_adaptive"
 )
 target_link_libraries(mhdvsh_hall_adaptive PRIVATE mhdvsh_core)
 
@@ -150,7 +150,7 @@ target_link_libraries(mhdvsh_hall_adaptive PRIVATE mhdvsh_core)
 add_executable(mhdvsh_hall_stability_experiment EXCLUDE_FROM_ALL
   app/mhdvsh_hall_stability_experiment.f90)
 set_target_properties(mhdvsh_hall_stability_experiment PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_stability_experiment"
 )
 target_link_libraries(mhdvsh_hall_stability_experiment PRIVATE mhdvsh_core)
 
@@ -161,7 +161,7 @@ target_link_libraries(mhdvsh_hall_stability_experiment PRIVATE mhdvsh_core)
 add_executable(mhdvsh_hall_dt_sweep EXCLUDE_FROM_ALL
   ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall_dt_sweep.f90)
 set_target_properties(mhdvsh_hall_dt_sweep PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_dt_sweep"
 )
 target_link_libraries(mhdvsh_hall_dt_sweep PRIVATE mhdvsh_core)
 
@@ -249,77 +249,77 @@ endif()
 # ── Tests ────────────────────────────────────────────────────────────────────
 add_executable(test_transforms test/test_transforms.f90)
 set_target_properties(test_transforms PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_transforms"
 )
 target_link_libraries(test_transforms PRIVATE mhdvsh_core)
 add_test(NAME transforms COMMAND test_transforms)
 
 add_executable(test_boundary_conditions test/test_boundary_conditions.f90)
 set_target_properties(test_boundary_conditions PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_boundary_conditions"
 )
 target_link_libraries(test_boundary_conditions PRIVATE mhdvsh_core)
 add_test(NAME boundary_conditions COMMAND test_boundary_conditions)
 
 add_executable(test_linear_solve test/test_linear_solve.f90)
 set_target_properties(test_linear_solve PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_linear_solve"
 )
 target_link_libraries(test_linear_solve PRIVATE mhdvsh_core)
 add_test(NAME linear_solve COMMAND test_linear_solve)
 
 add_executable(test_radial_operators test/test_radial_operators.f90)
 set_target_properties(test_radial_operators PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_radial_operators"
 )
 target_link_libraries(test_radial_operators PRIVATE mhdvsh_core)
 add_test(NAME radial_operators COMMAND test_radial_operators)
 
 add_executable(test_timestepper test/test_timestepper.f90)
 set_target_properties(test_timestepper PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_timestepper"
 )
 target_link_libraries(test_timestepper PRIVATE mhdvsh_core)
 add_test(NAME timestepper COMMAND test_timestepper)
 
 add_executable(test_field_diagnostics test/test_field_diagnostics.f90)
 set_target_properties(test_field_diagnostics PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_field_diagnostics"
 )
 target_link_libraries(test_field_diagnostics PRIVATE mhdvsh_core)
 add_test(NAME field_diagnostics COMMAND test_field_diagnostics)
 
 add_executable(test_units test/test_units.f90)
 set_target_properties(test_units PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_units"
 )
 target_link_libraries(test_units PRIVATE mhdvsh_core)
 add_test(NAME units COMMAND test_units)
 
 add_executable(test_hall_induction test/test_hall_induction.f90)
 set_target_properties(test_hall_induction PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_hall_induction"
 )
 target_link_libraries(test_hall_induction PRIVATE mhdvsh_core)
 add_test(NAME hall_induction COMMAND test_hall_induction)
 
 add_executable(test_io_checkpoint test/test_io_checkpoint.f90)
 set_target_properties(test_io_checkpoint PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_io_checkpoint"
 )
 target_link_libraries(test_io_checkpoint PRIVATE mhdvsh_core)
 add_test(NAME io_checkpoint COMMAND test_io_checkpoint)
 
 add_executable(test_diffusion_regime ${MHDVSH_DIFFUSION_SOURCES} test/test_diffusion_regime.f90)
 set_target_properties(test_diffusion_regime PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_diffusion_regime"
 )
 target_link_libraries(test_diffusion_regime PRIVATE mhdvsh_core)
 add_test(NAME diffusion_regime COMMAND test_diffusion_regime)
 
 add_executable(test_hall_regime ${MHDVSH_HALL_SOURCES} test/test_hall_regime.f90)
 set_target_properties(test_hall_regime PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_hall_regime"
 )
 target_link_libraries(test_hall_regime PRIVATE mhdvsh_core)
 add_test(NAME hall_regime COMMAND test_hall_regime)
@@ -331,14 +331,14 @@ add_test(NAME hall_regime COMMAND test_hall_regime)
 # here, none of which touch the filesystem).
 add_executable(test_eos_table test/test_eos_table.f90)
 set_target_properties(test_eos_table PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_eos_table"
 )
 target_link_libraries(test_eos_table PRIVATE mhdvsh_core)
 add_test(NAME eos_table COMMAND test_eos_table WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(test_tov_solver test/test_tov_solver.f90)
 set_target_properties(test_tov_solver PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_tov_solver"
 )
 target_link_libraries(test_tov_solver PRIVATE mhdvsh_core)
 add_test(NAME tov_solver COMMAND test_tov_solver WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -348,7 +348,7 @@ add_test(NAME tov_solver COMMAND test_tov_solver WORKING_DIRECTORY ${CMAKE_SOURC
 # reads no files itself, no WORKING_DIRECTORY needed.
 add_executable(test_crust_conductivity test/test_crust_conductivity.f90)
 set_target_properties(test_crust_conductivity PROPERTIES
-  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_crust_conductivity"
 )
 target_link_libraries(test_crust_conductivity PRIVATE mhdvsh_core)
 add_test(NAME crust_conductivity COMMAND test_crust_conductivity)
