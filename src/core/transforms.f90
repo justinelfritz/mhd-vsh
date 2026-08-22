@@ -17,8 +17,8 @@ PUBLIC :: FORWARD_SCALAR, INVERSE_SCALAR, FORWARD_VECTOR, INVERSE_VECTOR
 
 CONTAINS
 
-!> Forward transform (analysis): SPEC%COEF(r,lm) = sum_quad PHYS%F(r,theta,phi) *
-!> conj(Y_lm(theta,phi)) * w_theta*w_phi, independently at every radius.
+!> Forward transform (analysis): `SPEC%COEF(r,lm) = sum_quad PHYS%F(r,theta,phi) *
+!> conj(Y_lm(theta,phi)) * w_theta*w_phi`, independently at every radius.
 !>
 !> @param SPEC Output spectral scalar (already allocated to match PHYS/PLAN).
 !> @param PHYS Input physical scalar on PLAN's angular grid.
@@ -43,8 +43,8 @@ SUBROUTINE FORWARD_SCALAR(SPEC, PHYS, PLAN)
   !$OMP END PARALLEL DO
 END SUBROUTINE FORWARD_SCALAR
 
-!> Inverse transform (synthesis): PHYS%F(r,theta,phi) = Re[ sum_lm SPEC%COEF(r,lm) *
-!> Y_lm(theta,phi) ], the inverse of FORWARD_SCALAR.
+!> Inverse transform (synthesis): `PHYS%F(r,theta,phi) = Re[ sum_lm SPEC%COEF(r,lm) *
+!> Y_lm(theta,phi) ]`, the inverse of FORWARD_SCALAR.
 !>
 !> @param PHYS Output physical scalar (already allocated to match SPEC/PLAN).
 !> @param SPEC Input spectral scalar.

@@ -10,8 +10,8 @@ MODULE EOS_TABLE
 !>
 !> Table file format (unchanged from `lowd-eos.ja.tab`/
 !> `lowd-eos.ja.apr.tab`): one row per row, six whitespace-separated
-!> columns -- baryon number density (fm**-3), mass density (g/cm**3),
-!> pressure (dyn/cm**2 x1e-33... see LOAD_EOS_TABLE's own conversion,
+!> columns -- baryon number density (`fm**-3`), mass density (`g/cm**3`),
+!> pressure (`dyn/cm**2` x1e-33... see LOAD_EOS_TABLE's own conversion,
 !> ported unchanged from the original), Z, A, neutron fraction.
 !>
 !> @warning Geometrized-unit conversion constants (the `1.602d0`,
@@ -49,6 +49,8 @@ CONTAINS
 !> @param PATH EOS table file path.
 !> @param UL Length unit (central-density-dependent, from TOV_SOLVER).
 !> @param C4DG `c**4/G` in the same cgs-derived units nstot.f uses.
+!> @param TABLE Output: the loaded table, converted to TOV_SOLVER's
+!>   geometrized units.
 SUBROUTINE LOAD_EOS_TABLE(PATH, UL, C4DG, TABLE)
   CHARACTER(LEN=*),   INTENT(IN)  :: PATH
   REAL(KIND=dp),      INTENT(IN)  :: UL, C4DG

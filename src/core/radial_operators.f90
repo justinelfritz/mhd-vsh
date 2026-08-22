@@ -1,7 +1,7 @@
 MODULE RADIAL_OPERATORS
 !> Dense, l-independent radial differentiation operators (D1=d/dr,
 !> D2=d^2/dr^2) built once per grid via FD_WEIGHTS_GENERIC, plus the
-!> full-sphere origin-regularity correction. The l(l+1)/r**2 curvature
+!> full-sphere origin-regularity correction. The `l(l+1)/r**2` curvature
 !> term and boundary conditions are deliberately NOT included here -- they
 !> are applied later, at system-assembly time, so this module stays a
 !> reusable, regime-agnostic building block.
@@ -67,7 +67,7 @@ END SUBROUTINE BUILD_RADIAL_OPERATORS
 
 !> Rebuilds the D1/D2 rows nearest r=0 for a full-sphere grid, using an
 !> augmented stencil that includes mirrored ghost nodes at negative radius
-!> and the regularity closure f(-r)=(-1)**l f(r) (exact for a smooth field
+!> and the regularity closure `f(-r)=(-1)**l f(r)` (exact for a smooth field
 !> at fixed (l,m), from the parity of Y_l^m under (r,theta,phi) ->
 !> (-r,pi-theta,phi+pi)). No-op for a shell grid.
 !>
@@ -122,9 +122,9 @@ SUBROUTINE APPLY_ORIGIN_REGULARITY(D1, D2, L, RGRID)
   END DO
 END SUBROUTINE APPLY_ORIGIN_REGULARITY
 
-!> Adds the spherical-harmonic curvature term -l(l+1)/r**2 to the
+!> Adds the spherical-harmonic curvature term `-l(l+1)/r**2` to the
 !> diagonal of a caller-owned radial operator -- e.g. so a regime that
-!> wants D2 - l(l+1)/r**2 (the radial part of the scalar Laplacian's
+!> wants `D2 - l(l+1)/r**2` (the radial part of the scalar Laplacian's
 !> angular eigenvalue at degree l) can build it from a per-l copy of
 !> RADIAL_OPERATOR_T%D2 plus this call. Purely geometric: the same term
 !> at every degree l regardless of what physics the caller multiplies it

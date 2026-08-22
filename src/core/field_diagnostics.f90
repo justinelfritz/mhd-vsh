@@ -5,9 +5,9 @@ MODULE FIELD_DIAGNOSTICS
 !> breakdowns via POLOIDAL_MAGNETIC_ENERGY_BY_L/TOROIDAL_MAGNETIC_ENERGY_BY_L,
 !> e.g. for visualizing a mode cascade) is regime-agnostic;
 !> the dissipation/flux terms are per-regime Ohm's law: pure-resistive
-!> (diffusion, E=eta*j) gives JOULE_DISSIPATION_RATE and
+!> (diffusion, `E=eta*j`) gives JOULE_DISSIPATION_RATE and
 !> POYNTING_FLUX_RATE, while the diffusion-free Hall limit
-!> (E=f_H*j x B) gives a Joule term that is exactly zero (see
+!> (`E=f_H*j x B`) gives a Joule term that is exactly zero (see
 !> JOULE_DISSIPATION_RATE's own docstring -- its existing formula covers
 !> that regime's resistive part unchanged) and its own, unrelated
 !> HALL_POYNTING_FLUX_RATE.
@@ -22,13 +22,13 @@ MODULE FIELD_DIAGNOSTICS
 !> now adopted to match it (Gaussian cgs, 1/8pi). The diffusion Joule/
 !> Poynting formulas (Eqs.6,8) and the Hall Poynting formula (Hall-limit
 !> section) are new; the latter is the first mode-coupled (Gaunt/GWI,
-!> O(Nlm**3)) formula in this module -- every diffusion-limit formula
+!> `O(Nlm**3)`) formula in this module -- every diffusion-limit formula
 !> collapses to a diagonal sum thanks to VSH orthonormality, but Hall
 !> Poynting is inherently cubic in the field, so coupling is unavoidable.
 !>
-!> Derivation sketch: B_pol(l,m,r) = (1/R_l**2)*[Phi_lm*VSH_POL_DN(l,m) +
+!> Derivation sketch: `B_pol(l,m,r) = (1/R_l**2)*[Phi_lm*VSH_POL_DN(l,m) +
 !> R_l*Phi_lm'*VSH_POL_UP(l,m)], B_tor(l,m,r) = -(i/R_l)*Psi_lm*
-!> VSH_TOR(l,m), with R_l=r/sqrt(l(l+1)) (same source as
+!> VSH_TOR(l,m)`, with R_l=r/sqrt(l(l+1)) (same source as
 !> BOUNDARY_CONDITIONS' outer BC). FORTVSH's standard (J-coupled) VSH
 !> basis is complete and orthonormal (numerically confirmed against
 !> FORTVSH directly, not just asserted -- see the VSH_POL_UP/DN cross-
@@ -36,18 +36,18 @@ MODULE FIELD_DIAGNOSTICS
 !> collapse to a clean diagonal sum), so every formula below is a plain
 !> sum over (l,m) with no Gaunt/mode-coupling integrals needed.
 !>
-!> Current currents: j_pol(l,m,r) = (1/R_l**2)*[Psi_lm*VSH_POL_DN(l,m) +
+!> Current currents: `j_pol(l,m,r) = (1/R_l**2)*[Psi_lm*VSH_POL_DN(l,m) +
 !> R_l*Psi_lm'*VSH_POL_UP(l,m)], j_tor(l,m,r) = (i/R_l)*(Phi_lm'' -
-!> Phi_lm/R_l**2)*VSH_TOR(l,m) -- i.e. Phi'' (RADIAL_OPERATOR_T%D2) is
+!> Phi_lm/R_l**2)*VSH_TOR(l,m)` -- i.e. Phi'' (RADIAL_OPERATOR_T%D2) is
 !> needed for the Joule/Poynting terms though not for energy alone; note
-!> Phi_lm''-Phi_lm/R_l**2 = Phi_lm'' - l(l+1)*Phi_lm/r**2 is exactly
+!> `Phi_lm''-Phi_lm/R_l**2 = Phi_lm'' - l(l+1)*Phi_lm/r**2` is exactly
 !> RADIAL_OPERATORS::ADD_CURVATURE_TERM's operator applied to Phi -- the
 !> same combination DIFFUSION_REGIME already assembles for its own
 !> implicit solve.
 !>
 !> POYNTING_FLUX_RATE assumes Phi/Psi represent a real physical field
 !> (the standard l,-m <-> conj(l,m) symmetry), since its boundary terms
-!> aren't manifestly real mode-by-mode the way the |.|**2-only energy/
+!> aren't manifestly real mode-by-mode the way the `|.|**2`-only energy/
 !> Joule sums are -- only the m-sum as a whole is guaranteed real for a
 !> real field. The real part is returned; for coefficients that don't
 !> satisfy that symmetry (e.g. hand-picked test values), the discarded
@@ -70,7 +70,7 @@ MODULE FIELD_DIAGNOSTICS
 !>   baked into this module, so results are dimensionally correct in ANY
 !>   consistent choice of length/time/field units, not just Gaussian-cgs
 !>   cm/s/Gauss. See UNITS (units.f90) for this project's adopted
-!>   code-unit system (B: 10**12 G, length: km, time: yr) and the
+!>   code-unit system (B: `10**12` G, length: km, time: yr) and the
 !>   multiplicative factors to convert a code-unit result here to erg/
 !>   erg-per-second -- that conversion belongs at the reporting layer
 !>   (a driver's printed/logged output), not inside this module.
@@ -93,7 +93,7 @@ CONTAINS
 !> @param PHI Poloidal potential (see module header), SPECTRAL_SCALAR_T.
 !> @param OPS Radial derivative operator (for Phi'); OPS%D1 built on RGRID.
 !> @param RGRID Radial grid PHI/OPS were built on.
-!> Returns: poloidal magnetic energy density (1/8pi * B_pol.B_pol*,
+!> Returns: poloidal magnetic energy density (`1/8pi * B_pol.B_pol*`,
 !>   angle-integrated) at every radial node, size (RGRID%N). Integrate in
 !>   r for total energy -- see TOTAL_POLOIDAL_MAGNETIC_ENERGY.
 FUNCTION POLOIDAL_ENERGY_DENSITY(PHI, OPS, RGRID) RESULT(E_OF_R)
@@ -125,7 +125,7 @@ END FUNCTION POLOIDAL_ENERGY_DENSITY
 
 !> @param PSI Toroidal potential, SPECTRAL_SCALAR_T.
 !> @param RGRID Radial grid PSI was built on.
-!> Returns: toroidal magnetic energy density (1/8pi * B_tor.B_tor*,
+!> Returns: toroidal magnetic energy density (`1/8pi * B_tor.B_tor*`,
 !>   angle-integrated) at every radial node, size (RGRID%N).
 FUNCTION TOROIDAL_ENERGY_DENSITY(PSI, RGRID) RESULT(E_OF_R)
   TYPE(SPECTRAL_SCALAR_T), INTENT(IN) :: PSI
@@ -206,7 +206,7 @@ END FUNCTION TOTAL_TOROIDAL_MAGNETIC_ENERGY
 !>   E_B,tor(t), same formula TOTAL_TOROIDAL_MAGNETIC_ENERGY implements)
 !>   broken out PER DEGREE l, size (0:PSI%LMAX) -- see
 !>   POLOIDAL_MAGNETIC_ENERGY_BY_L's docstring for the same identity
-!>   (SUM over l reproduces the TOTAL_* function exactly).
+!>   (SUM over l reproduces the `TOTAL_*` function exactly).
 FUNCTION TOROIDAL_MAGNETIC_ENERGY_BY_L(PSI, RGRID) RESULT(E_OF_L)
   TYPE(SPECTRAL_SCALAR_T), INTENT(IN) :: PSI
   TYPE(RADIAL_GRID_T),     INTENT(IN) :: RGRID
@@ -246,7 +246,7 @@ END FUNCTION TOTAL_MAGNETIC_ENERGY
 !>   Joule term for the weak-Hall regime, unchanged -- a Hall
 !>   contribution to E is always perpendicular to j (j.(j x B)=0
 !>   identically), so it does no work on the current and contributes
-!>   exactly zero additional dissipation; only the resistive eta*j term
+!>   exactly zero additional dissipation; only the resistive `eta*j` term
 !>   ever heats. Does NOT extend to a magnetofrictional Ohm's law this
 !>   way -- that term is dissipative by design, a genuinely different
 !>   mechanism, not covered by this argument.
@@ -261,7 +261,7 @@ FUNCTION JOULE_DISSIPATION_RATE(PHI, PSI, OPS, RGRID, ETA) RESULT(E_DOT_J)
     RADIAL_INTEGRAL(CURRENT_DENSITY_SQUARED_BY_R(PHI, PSI, OPS, RGRID), RGRID)
 END FUNCTION JOULE_DISSIPATION_RATE
 
-!> Angle-integrated (over the full 4pi sphere) |curl(B)|**2 = |j|**2 at
+!> Angle-integrated (over the full 4pi sphere) `|curl(B)|**2 = |j|**2` at
 !> every radial node -- the j_pol/j_tor combination from the module
 !> header (j_pol uses Psi, j_tor uses curvature-of-Phi, dual to how
 !> B_pol/B_tor use Phi/Psi), summed via VSH orthonormality (an exact
@@ -271,7 +271,7 @@ END FUNCTION JOULE_DISSIPATION_RATE
 !> HALL_COURANT_TIMESTEP, which uses this per-radial-node rather than
 !> integrated over r.
 !> @param PHI, PSI, OPS, RGRID as JOULE_DISSIPATION_RATE.
-!> Returns: |curl(B)|**2, angle-integrated over 4pi sr, at every radial
+!> Returns: `|curl(B)|**2`, angle-integrated over 4pi sr, at every radial
 !>   node, size (RGRID%N) -- no ETA, no radial integral (JOULE_DISSIPATION_RATE
 !>   applies both on top of this).
 FUNCTION CURRENT_DENSITY_SQUARED_BY_R(PHI, PSI, OPS, RGRID) RESULT(J2_OF_R)
@@ -311,13 +311,13 @@ END FUNCTION CURRENT_DENSITY_SQUARED_BY_R
 
 !> Hall-regime CFL/Courant-limited maximum stable step size (Justin
 !> Elfritz, 2026-08-21): tc = min over radial cells of
-!> dr_i/(f_H_i*|current|_i), where |current|=|curl(B)|. A genuine
+!> `dr_i/(f_H_i*|current|_i)`, where `|current|=|curl(B)|`. A genuine
 !> pointwise |curl(B)|(r,theta,phi) would need a physical-space VSH
 !> synthesis this codebase deliberately never does (module header:
 !> "never from a reconstructed physical B") -- |current| here is instead
 !> the RMS |curl(B)| over the sphere at each radius, an EXACT quantity
 !> from VSH orthonormality/Parseval (CURRENT_DENSITY_SQUARED_BY_R is the
-!> angle-INTEGRATED |curl(B)|**2 over 4pi sr; dividing by 4pi and taking
+!> angle-INTEGRATED `|curl(B)|**2` over 4pi sr; dividing by 4pi and taking
 !> sqrt gives the RMS), not an approximation of some pointwise value --
 !> and the standard choice for CFL estimation in spectral codes (an
 !> L2-norm-based characteristic magnitude).
@@ -411,8 +411,8 @@ FUNCTION POYNTING_FLUX_RATE(PHI, PSI, OPS, RGRID, ETA) RESULT(E_DOT_S)
 END FUNCTION POYNTING_FLUX_RATE
 
 !> @param PHI, PSI, OPS, RGRID as JOULE_DISSIPATION_RATE.
-!> @param F_HALL Hall prefactor (c/(4*pi*e*n_e), the coefficient of the
-!>   diffusion-free Hall induction equation curl(F_HALL*j x B)) --
+!> @param F_HALL Hall prefactor (`c/(4*pi*e*n_e)`, the coefficient of the
+!>   diffusion-free Hall induction equation `curl(F_HALL*j x B)`) --
 !>   analytic_formulas/mhd-vsh-relations.tex, "Energy Budget in Hall
 !>   Limit". A genuinely different derivation from JOULE_DISSIPATION_RATE/
 !>   POYNTING_FLUX_RATE's pure-resistive one, not an extension of it: the
@@ -423,7 +423,7 @@ END FUNCTION POYNTING_FLUX_RATE
 !>   cubic-in-field (mode-coupled) formula, computed here.
 !> @note Coupling coefficient I^{nm}_{kl,k'l'} = FORTVSH's
 !>   GWI(k,l,k',l',n,m) (the Gaunt coefficient
-!>   integral(Y_k^l*Y_k'^l'*conj(Y_n^m))dOmega) -- the first use of
+!>   `integral(Y_k^l*Y_k'^l'*conj(Y_n^m))dOmega`) -- the first use of
 !>   mode-coupling in this module; every other FIELD_DIAGNOSTICS formula
 !>   collapses to a diagonal sum thanks to VSH orthonormality, but this
 !>   one is inherently cubic in the field (Hall is itself quadratic in
@@ -436,7 +436,7 @@ END FUNCTION POYNTING_FLUX_RATE
 !>   and the target n/m are restricted via the coupling coefficient's
 !>   own triangle-band/m=l+l' selection rule rather than searched, same
 !>   optimization as HALL_INDUCTION_RHS -- what makes this tractable at
-!>   LMAX=30 for a sparse state, where the full O(Nlm**3) worst case
+!>   LMAX=30 for a sparse state, where the full `O(Nlm**3)` worst case
 !>   (the original, unoptimized form of this loop) would be infeasible
 !>   called every logged timestep. Assumes Phi/Psi represent a real
 !>   field, same as POYNTING_FLUX_RATE: the real part of the boundary

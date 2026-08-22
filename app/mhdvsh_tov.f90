@@ -4,7 +4,7 @@
 !> (ETA_AND_F_HALL_AT), printing the M/R summary and (optionally) writing
 !> the full radial profile to a data file.
 !>
-!> Central density (9.88e14 g/cm**3) matches nstot.f's own commented
+!> Central density (9.88e14 `g/cm**3`) matches nstot.f's own commented
 !> "M=1.40" reference star -- the regression target for this port (see
 !> test/test_tov_solver.f90, checked against the real, already-solved
 !> 2015 output at ~/Desktop/EOSNS/fort.34 and PL.DAT).

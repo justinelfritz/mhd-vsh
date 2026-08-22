@@ -63,7 +63,7 @@ CONTAINS
 !> conductivity) and `f_H = c/(4*pi*e*n_e)` (already established in
 !> hall_induction.f90's own docstring) are then converted from Gaussian-
 !> cgs into this project's code units via UNITS -- eta needs
-!> [length]**2/[time], f_H needs [length]**2/([B]*[time]), matching
+!> `[length]**2/[time]`, f_H needs `[length]**2/([B]*[time])`, matching
 !> DIFFUSION_INIT/HALL_INIT's existing scalar ETA/F_HALL convention.
 !>
 !> Only rows with a genuine nucleus (PROFILE%A_TABLE>0 -- NOT AH, which
@@ -137,7 +137,7 @@ END SUBROUTINE ETA_AND_F_HALL_AT
 !> Entry point. Ported from potekhinc.f's `subroutine potekhinc` verbatim
 !> (see module header re: the omitted dead SIGMA lines).
 !> @param T1 Temperature, K.
-!> @param RHO Mass density, g/cm**3.
+!> @param RHO Mass density, `g/cm**3`.
 !> @param B12 Magnetic field, 1e12 G.
 !> @param CMI Ion mass number.
 !> @param ZION Ion charge number.
@@ -552,7 +552,7 @@ FUNCTION COULAN2(XS, XW0, V, XW1) RESULT(RESULT_VAL)
   END DO
 END FUNCTION COULAN2
 
-!> exp(XI)*E_{L+1}(XI) (exponential integral), ported from potekhinc.f's
+!> `exp(XI)*E_{L+1}(XI)` (exponential integral), ported from potekhinc.f's
 !> `function EXPINT` verbatim.
 FUNCTION EXPINT(XI, L) RESULT(RESULT_VAL)
   REAL(KIND=dp),    INTENT(IN) :: XI

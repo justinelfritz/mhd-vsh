@@ -2,20 +2,20 @@
 !> outer timestep, instead of app/mhdvsh_hall.f90's fixed DT -- otherwise
 !> identical setup (same grid, seed mode, ETA/F_HALL/N_SUB). Built on
 !> TIMESTEPPER::RUN_ADAPTIVE + HALL_REGIME::HALL_COMPUTE_DT/HALL_SET_DT
-!> (see their own docstrings for the exact tc=min(dr/(F_HALL*|current|))
+!> (see their own docstrings for the exact `tc=min(dr/(F_HALL*|current|))`
 !> formula, Justin Elfritz, 2026-08-21, and the RMS-vs-pointwise-max
 !> caveat in how |current| is estimated).
 !>
 !> DT is recomputed every N_SUB outer steps (amortizing the cost of
 !> re-factorizing DIFFUSION_INIT's implicit solve, which HALL_SET_DT
-!> triggers on every recompute) and set to 0.5*tc (a safety margin below
+!> triggers on every recompute) and set to `0.5*tc` (a safety margin below
 !> the raw Hall-CFL limit) -- both per Justin Elfritz's own choice
 !> (2026-08-21), not hardcoded defaults; see mhdvsh_hall.f90 for the
 !> fixed-DT counterpart these choices are compared against.
 !>
 !> Optional command-line argument: a file path to write a time-resolved
 !> series of (step, t, dt_yr, tc_raw_yr, E_poloidal, E_toroidal) --
-!> tc_raw is the un-scaled Hall-CFL limit (dt=0.5*tc_raw), logged
+!> tc_raw is the un-scaled Hall-CFL limit (`dt=0.5*tc_raw`), logged
 !> alongside dt itself so a growing gap between them (tc_raw shrinking
 !> as the Hall term drives a current cascade) is visible directly, not
 !> just inferred from dt's own trend.

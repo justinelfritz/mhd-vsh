@@ -1,13 +1,13 @@
 MODULE DIFFUSION_REGIME
 !> Pure linear Ohmic diffusion of the (Phi,Psi) potential pair,
-!> decoupled per (l,m): d(Phi_lm)/dt = ETA*(D2 - l(l+1)/r**2)*Phi_lm,
+!> decoupled per (l,m): `d(Phi_lm)/dt = ETA*(D2 - l(l+1)/r**2)*Phi_lm`,
 !> same equation for Psi_lm. The simplest possible regime -- no
 !> advection, no Hall, no magnetofriction -- built first to prove the
 !> whole pipeline (grid -> radial operators -> boundary conditions ->
 !> linear_solve -> regime_interface/timestepper) end to end before any
 !> nonlinear regime is attempted.
 !>
-!> Backward Euler in time: per l, A_l = I - dt*ETA*(D2-l(l+1)/r**2), with
+!> Backward Euler in time: per l, `A_l = I - dt*ETA*(D2-l(l+1)/r**2)`, with
 !> the inner Dirichlet (BOUNDARY_CONDITIONS::APPLY_INNER_DIRICHLET_BC)
 !> and outer vacuum (APPLY_VACUUM_BC_POLOIDAL for Phi,
 !> APPLY_VACUUM_BC_TOROIDAL for Psi) rows spliced in. Since A_l depends

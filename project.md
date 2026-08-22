@@ -40,11 +40,27 @@ operators, boundary conditions, and a dense LAPACK solver.
 - [[REGIME_INTERFACE]] and [[TIMESTEPPER]] -- the opaque per-regime
   `ADVANCE` contract and the shared fixed-step loop that drives it.
 - [[FIELD_DIAGNOSTICS]] -- time-resolved diagnostics computed directly
-  from `(Phi,Psi)`; see its header for which coefficients are
+  from `(Phi,Psi)`, including the Hall-CFL-limited timestep
+  (`HALL_COURANT_TIMESTEP`); see its header for which coefficients are
   provisional, pending re-derivation.
+- [[UNITS]] -- this project's adopted code-unit system (B, length,
+  time) and the conversion factors to physical cgs, applied only at
+  the reporting layer.
+- [[TIMESTEPPER]] -- both the fixed-`DT` `RUN` loop and the
+  Hall-CFL-driven `RUN_ADAPTIVE` variant.
+- [[IO_CHECKPOINT]] -- checkpoint/restart for a long-running regime
+  driver (`WRITE_CHECKPOINT`/`READ_CHECKPOINT`).
 - `src/regimes/diffusion/diffusion_regime.f90` -- the first working
   regime (pure linear diffusion), and the reference pattern for every
   regime after it.
+- `src/regimes/hall/hall_regime.f90` -- the combined resistive+Hall
+  regime (implicit diffusion + explicit Hall substeps), built on
+  [[HALL_INDUCTION]]'s RHS evaluator.
+- [[TOV_SOLVER]], [[EOS_TABLE]], [[CRUST_CONDUCTIVITY]] -- a ported
+  TOV + crust-EOS/conductivity solver supplying a real radial
+  `n_e(r)`/`eta(r)`/`f_H(r)` profile (`app/mhdvsh_tov.f90`), consumed
+  by the Hall regime's optional `ETA_PROFILE`/`F_HALL_PROFILE`
+  arguments.
 
 ## Building
 

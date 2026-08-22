@@ -3,7 +3,7 @@ MODULE FD_WEIGHTS
 !> of Weights in Finite Difference Formulas", SIAM Review 40(3):685-691).
 !> Given an arbitrary (possibly nonuniform) set of stencil node locations,
 !> produces weights for every derivative order up to MMAX simultaneously in
-!> one O(N**2) pass. This single routine is used for interior stencils,
+!> one `O(N**2)` pass. This single routine is used for interior stencils,
 !> one-sided boundary closures, and (via RADIAL_OPERATORS' mirrored ghost
 !> nodes) the full-sphere origin-regularity rows -- uniform and stretched
 !> grids alike.

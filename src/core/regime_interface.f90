@@ -6,7 +6,7 @@ MODULE REGIME_INTERFACE
 !> its own physics requires (explicit forcing, any implicit solve via
 !> LINEAR_SOLVE, ...), with none of that visible outside the regime.
 !>
-!> STATE is CLASS(*) (unlimited polymorphic) because each regime's state
+!> STATE is `CLASS(*)` (unlimited polymorphic) because each regime's state
 !> is a genuinely different concrete type (e.g. one SPECTRAL_SCALAR_T
 !> for a scalar diffusion regime, a Phi/Psi pair for a magnetic regime,
 !> see FIELD_TYPES) -- this interface has to describe any of them

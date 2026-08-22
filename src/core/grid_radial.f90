@@ -2,7 +2,7 @@ MODULE GRID_RADIAL
 !> Radial grid: finite-difference nodes, either a spherical shell
 !> (r_min..r_max, genuine boundary conditions at both ends) or a full
 !> sphere (r=0..r_max, half-step-staggered so no node sits exactly at the
-!> origin, where l(l+1)/r**2 is singular for l>=1).
+!> origin, where `l(l+1)/r**2` is singular for l>=1).
 USE KINDS, ONLY: dp, i4
 IMPLICIT NONE
 PRIVATE

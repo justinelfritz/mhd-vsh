@@ -72,7 +72,7 @@ SUBROUTINE FACTORIZE_DENSE(FACTORS, A)
   CALL DGETRF(N, N, FACTORS%LU, N, FACTORS%IPIV, FACTORS%INFO)
 END SUBROUTINE FACTORIZE_DENSE
 
-!> @param X Output solution, shape (N,NRHS): A*X(:,k) = B(:,k) for every
+!> @param X Output solution, shape (N,NRHS): `A*X(:,k) = B(:,k)` for every
 !>   column k.
 !> @param FACTORS Pivoted-LU factorization from FACTORIZE_DENSE; reused
 !>   unmodified, so the same FACTORS may be solved against repeatedly.

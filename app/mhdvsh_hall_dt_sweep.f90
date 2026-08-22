@@ -17,7 +17,7 @@
 !> Usage: mhdvsh_hall_dt_sweep <dt_yr> <tmax_yr> [output_data_path]
 !> N_STEPS is computed as NINT(tmax_yr/dt_yr). Blow-up detection matches
 !> app/mhdvsh_hall_stability_experiment.f90's convention: NaN or
-!> E > BLOWUP_FACTOR*E0 at any logged point.
+!> `E > BLOWUP_FACTOR*E0` at any logged point.
 PROGRAM MHDVSH_HALL_DT_SWEEP
 USE, INTRINSIC :: IEEE_ARITHMETIC, ONLY: IEEE_IS_NAN
 USE KINDS,              ONLY: dp, i4
@@ -101,7 +101,7 @@ IF (WRITE_DATA) CLOSE(DATA_UNIT)
 CONTAINS
 
 !> Matches TIMESTEPPER::REGIME_ON_STEP_I. Checks TOTAL_MAGNETIC_ENERGY
-!> for NaN or > BLOWUP_FACTOR*E0 every LOG_EVERY steps (same convention
+!> for NaN or `> BLOWUP_FACTOR*E0` every LOG_EVERY steps (same convention
 !> as app/mhdvsh_hall_stability_experiment.f90); logs to DATA_UNIT if
 !> requested. STOPs the whole program on the first blowup detected --
 !> TIMESTEPPER::RUN has no early-exit hook, so this is the only way to

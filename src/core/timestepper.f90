@@ -51,12 +51,12 @@ ABSTRACT INTERFACE
   !> Re-initializes whatever cached, DT-dependent state the regime's own
   !> ADVANCE relies on (e.g. an implicit solve's cached LU factorization)
   !> for a new step size -- supplied by the driver as a thin wrapper
-  !> around the regime's own *_INIT. Needed because REGIME_ADVANCE_I's
+  !> around the regime's own `*_INIT`. Needed because REGIME_ADVANCE_I's
   !> fixed (STATE,DT,T) signature has no room to pass RGRID/OPS/ETA/...
   !> required to rebuild such caches, so every regime instead caches
-  !> those itself (module SAVE state) at *_INIT time -- the same
+  !> those itself (module SAVE state) at `*_INIT` time -- the same
   !> reasoning that motivated that design already applies here: this
-  !> callback re-invokes *_INIT using the regime's own cached values,
+  !> callback re-invokes `*_INIT` using the regime's own cached values,
   !> with only DT actually changing.
   !>
   !> @param DT The new step size to adopt.
@@ -75,7 +75,7 @@ CONTAINS
 !> @param DT Fixed step size.
 !> @param N_STEPS Number of steps to take.
 !> @param T_START Optional start time (default 0). ADVANCE's k-th call
-!>   (k=1..N_STEPS) sees T = T_START + (k-1)*DT.
+!>   (k=1..N_STEPS) sees `T = T_START + (k-1)*DT`.
 !> @param ON_STEP Optional observer matching REGIME_ON_STEP_I, called
 !>   after every step (e.g. to log a diagnostic time series); has no
 !>   effect on the evolution itself.
@@ -106,13 +106,13 @@ END SUBROUTINE RUN
 !> SET_DT is called so the regime can refresh any cached, DT-dependent
 !> state (e.g. an implicit solve's LU factorization) before the next
 !> ADVANCE call -- SET_DT is called even on the very first step, so the
-!> regime never runs with whatever DT its own prior *_INIT call happened
+!> regime never runs with whatever DT its own prior `*_INIT` call happened
 !> to be given.
 !>
 !> DT_RECOMPUTE_EVERY is deliberately NOT defaulted to 1 (recompute-every-
 !> step): recomputing DT is cheap (COMPUTE_DT is typically an O(N_r)
 !> diagnostic), but SET_DT is typically NOT (e.g. HALL_REGIME's own
-!> SET_DT re-factorizes an O(N_r**3)-per-l dense system) -- callers must
+!> SET_DT re-factorizes an `O(N_r**3)`-per-l dense system) -- callers must
 !> choose a cadence that amortizes that cost against how fast their
 !> regime's own stability limit actually drifts, there's no
 !> regime-agnostic "safe default" here.
@@ -128,7 +128,7 @@ END SUBROUTINE RUN
 !> @param N_STEPS Number of steps to take.
 !> @param DT_RECOMPUTE_EVERY Recompute (and call SET_DT) every this many
 !>   steps -- 1 means every step.
-!> @param CFL_SAFETY Optional safety margin, DT = CFL_SAFETY*COMPUTE_DT(STATE)
+!> @param CFL_SAFETY Optional safety margin, `DT = CFL_SAFETY*COMPUTE_DT(STATE)`
 !>   (default 0.5).
 !> @param T_START Optional start time (default 0).
 !> @param ON_STEP Optional observer matching REGIME_ON_STEP_I, called

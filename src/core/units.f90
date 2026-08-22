@@ -8,18 +8,18 @@ MODULE UNITS
 !> is written in genuinely unit-system-agnostic form -- ETA/F_HALL/DT/
 !> R_MIN/R_MAX are free REAL(dp) inputs with no unit baked into the code,
 !> so those formulas are already dimensionally correct in ANY consistent
-!> choice of units, provided ETA is given in [length]**2/[time] and
-!> F_HALL in [length]**2/([B]*[time]) to match whatever [length],[time],
+!> choice of units, provided ETA is given in `[length]**2/[time]` and
+!> F_HALL in `[length]**2/([B]*[time])` to match whatever [length],[time],
 !> [B] the caller has chosen for R_MIN/R_MAX/DT/the state's Phi,Psi. This
 !> module exists only to record what THIS project has chosen (per Justin
-!> Elfritz, 2026-08-20) -- B: 10**12 Gauss, length: km, time: (Julian)
+!> Elfritz, 2026-08-20) -- B: `10**12` Gauss, length: km, time: (Julian)
 !> year -- and to convert diagnostic OUTPUTS to erg/erg-per-second at the
 !> point they're printed or logged, never inside the core solve/
 !> diagnostic formulas themselves.
 !>
-!> Energy converts by ENERGY_UNIT_ERG = B_UNIT_GAUSS**2 * LENGTH_UNIT_CM**3
+!> Energy converts by `ENERGY_UNIT_ERG = B_UNIT_GAUSS**2 * LENGTH_UNIT_CM**3`
 !> on dimensional grounds alone (Gaussian cgs: energy = integral of
-!> B**2/8pi over a volume, so [energy] = [B]**2*[length]**3 regardless of
+!> `B**2/8pi` over a volume, so `[energy] = [B]**2*[length]**3` regardless of
 !> the particular formula computing it) -- this holds for
 !> TOTAL_(POLOIDAL/TOROIDAL/)_MAGNETIC_ENERGY without needing to re-derive
 !> FIELD_DIAGNOSTICS' internal radial-integral bookkeeping. Rates
@@ -29,7 +29,7 @@ MODULE UNITS
 !>
 !> @warning A code-unit numeric result times these factors is only
 !>   physically meaningful if R_MIN/R_MAX/DT/ETA/F_HALL were themselves
-!>   entered in km/yr/km**2 per yr/km**2 per (10**12 G) per yr consistently
+!>   entered in `km/yr/km**2` per `yr/km**2` per `(10**12 G)` per yr consistently
 !>   for that run -- this module cannot check that; it is pure
 !>   documentation plus arithmetic.
 USE KINDS, ONLY: dp
@@ -38,7 +38,7 @@ PRIVATE
 PUBLIC :: B_UNIT_GAUSS, LENGTH_UNIT_CM, TIME_UNIT_S, &
           ENERGY_UNIT_ERG, POWER_UNIT_ERG_PER_S
 
-!> This project's field unit: 10**12 Gauss.
+!> This project's field unit: `10**12` Gauss.
 REAL(KIND=dp), PARAMETER :: B_UNIT_GAUSS = 1.0E12_dp
 !> This project's length unit: 1 km, in cm.
 REAL(KIND=dp), PARAMETER :: LENGTH_UNIT_CM = 1.0E5_dp

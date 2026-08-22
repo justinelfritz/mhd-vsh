@@ -15,7 +15,7 @@
 !> truncation error dominates.
 !>
 !> Units (see UNITS, units.f90): R_MIN/R_MAX/RGRID%R are in km, ETA in
-!> km**2/yr, DT/t in yr -- FIELD_DIAGNOSTICS' formulas don't care about
+!> `km**2/yr`, DT/t in yr -- FIELD_DIAGNOSTICS' formulas don't care about
 !> this choice (unit-agnostic), so nothing about the solve itself
 !> changes; only the energy/rate columns actually written below (and
 !> printed to the console) are converted, via UNITS' ENERGY_UNIT_ERG/

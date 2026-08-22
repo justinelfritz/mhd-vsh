@@ -16,8 +16,8 @@ MODULE BOUNDARY_CONDITIONS
 !> **Vacuum (insulating) outer boundary, Model NS-A.** Matching the field
 !> at r=r_out to a current-free exterior multipole expansion (the paper's
 !> Eq.25, citing GW1) gives, independent of m:
-!>   dPhi_nm/dr |_{r_out} = -(l/r_out) * Phi_nm(r_out)   (Robin)
-!>   Psi_nm(r_out) = 0                                    (Dirichlet)
+!>   `dPhi_nm/dr |_{r_out} = -(l/r_out) * Phi_nm(r_out)`   (Robin)
+!>   `Psi_nm(r_out) = 0`                                    (Dirichlet)
 !> Unlike the polar (a_rad,a_pol,a_tor) basis this module's first version
 !> was built against, Phi here is a single potential whose own radial
 !> derivative carries independent physical information, so the vacuum
@@ -34,7 +34,7 @@ CONTAINS
 
 !> Overwrites row N (the outermost radial node, r=r_out) of a
 !> caller-owned copy of Phi's first-derivative operator so that row
-!> computes d(Phi)/dr + (l/r_out)*Phi instead of just d(Phi)/dr -- the
+!> computes `d(Phi)/dr + (l/r_out)*Phi` instead of just `d(Phi)/dr` -- the
 !> LHS of the vacuum Robin condition (see module header), meant to
 !> replace whatever evolution-equation row would otherwise apply there,
 !> with the corresponding system RHS forced to zero.

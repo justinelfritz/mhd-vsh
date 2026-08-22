@@ -33,13 +33,13 @@ PUBLIC :: TOV_PROFILE_T, SOLVE_TOV_STAR
 !> call.
 TYPE :: TOV_PROFILE_T
   INTEGER(KIND=i4) :: N = 0
-  REAL(KIND=dp) :: MASS_MSUN = 0.0_dp   !> Total gravitational mass, solar masses.
-  REAL(KIND=dp) :: RADIUS_KM = 0.0_dp   !> Surface radius, km.
-  REAL(KIND=dp), ALLOCATABLE :: R(:)      !> Radius, km.
-  REAL(KIND=dp), ALLOCATABLE :: RHOCGS(:) !> Mass density, g/cm**3.
-  REAL(KIND=dp), ALLOCATABLE :: PCGS(:)   !> Pressure, dyn/cm**2.
-  REAL(KIND=dp), ALLOCATABLE :: NBFM(:)   !> Baryon number density, fm**-3.
-  REAL(KIND=dp), ALLOCATABLE :: NEL(:)    !> Electron number density, fm**-3.
+  REAL(KIND=dp) :: MASS_MSUN = 0.0_dp   !! Total gravitational mass, solar masses.
+  REAL(KIND=dp) :: RADIUS_KM = 0.0_dp   !! Surface radius, km.
+  REAL(KIND=dp), ALLOCATABLE :: R(:)      !! Radius, km.
+  REAL(KIND=dp), ALLOCATABLE :: RHOCGS(:) !! Mass density, `g/cm**3`.
+  REAL(KIND=dp), ALLOCATABLE :: PCGS(:)   !! Pressure, `dyn/cm**2`.
+  REAL(KIND=dp), ALLOCATABLE :: NBFM(:)   !! Baryon number density, `fm**-3`.
+  REAL(KIND=dp), ALLOCATABLE :: NEL(:)    !! Electron number density, `fm**-3`.
   REAL(KIND=dp), ALLOCATABLE :: AH(:), ZH(:), XH(:), YE(:), YN(:)
   !> Raw EOS-table mass number (nstot.f's `a`, pre-COMPOSITION), the
   !> actual field its own conductivity gate `IF (a.gt.0.d0)` tests --
@@ -56,17 +56,18 @@ TYPE(EOS_TABLE_T), SAVE :: ACTIVE_TABLE
 
 CONTAINS
 
-!> Solves a single TOV star of central density RHOCGS (g/cm**3) using
+!> Solves a single TOV star of central density RHOCGS (`g/cm**3`) using
 !> the EOS table at EOS_PATH, returning its radial profile sampled at
 !> NPOINTS+2 points (NPOINTS interior steps in log-pressure, plus the
 !> center and surface). Ported from nstot.f's full driver body.
 !>
-!> @param RHOCGS Central mass density, g/cm**3 (e.g. 9.88d14 for the
+!> @param RHOCGS Central mass density, `g/cm**3` (e.g. 9.88d14 for the
 !>   M=1.40 reference star nstot.f's own comments document).
 !> @param EOS_PATH Path to a table in the `lowd-eos.ja.tab` format.
 !> @param NPOINTS Number of log-pressure integration steps for the
 !>   radial-profile pass (nstot.f prompts for this interactively; here
 !>   it's an argument).
+!> @param PROFILE Output: the solved radial profile (see TOV_PROFILE_T).
 SUBROUTINE SOLVE_TOV_STAR(RHOCGS, EOS_PATH, NPOINTS, PROFILE)
   REAL(KIND=dp),       INTENT(IN)  :: RHOCGS
   CHARACTER(LEN=*),    INTENT(IN)  :: EOS_PATH
@@ -200,7 +201,7 @@ SUBROUTINE COMPOSITION(A, Z, XN, AH, ZH, XH, YE, YN)
 END SUBROUTINE COMPOSITION
 
 !> Writes one row of PROFILE (radius, density, pressure, baryon/electron
-!> number density, composition) -- NEL = NBFM*YE, ported from nstot.f
+!> number density, composition) -- `NEL = NBFM*YE`, ported from nstot.f
 !> line 235 (computed unconditionally, same as the original).
 SUBROUTINE FILL_ROW(PROFILE, IDX, RAD, RHOCGS_I, PCGS_I, NBFM_I, A_I, AH_I, ZH_I, XH_I, YE_I, YN_I)
   TYPE(TOV_PROFILE_T), INTENT(INOUT) :: PROFILE

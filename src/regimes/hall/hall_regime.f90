@@ -41,7 +41,7 @@ MODULE HALL_REGIME
 !> re-invokes DIFFUSION_INIT (re-factorizing the implicit solve) and
 !> HALL_INIT's own SAVED_DT_HALL update, using every OTHER argument
 !> HALL_INIT was originally given, now cached for exactly this purpose
-!> (SAVED_ETA/SAVED_ETA_PROFILE alongside the pre-existing SAVED_*
+!> (SAVED_ETA/SAVED_ETA_PROFILE alongside the pre-existing `SAVED_*`
 !> fields). HALL_COMPUTE_DT (matching REGIME_DT_I) is the paired
 !> callback a driver passes to TIMESTEPPER::RUN_ADAPTIVE alongside it --
 !> see app/mhdvsh_hall_adaptive.f90 for the Hall-CFL-driven dynamic-DT
@@ -71,7 +71,7 @@ CONTAINS
 !> REGIME_ADVANCE_I's fixed (STATE,DT,T) signature has no room for.
 !>
 !> @param RGRID, OPS, LMAX, ETA, DT as DIFFUSION_INIT.
-!> @param F_HALL Hall prefactor (km**2/(1e12 G)/yr, see UNITS).
+!> @param F_HALL Hall prefactor (`km**2/(1e12 G)/yr`, see UNITS).
 !> @param N_SUB Number of explicit Hall RK4 substeps per outer DT (so
 !>   each substep has size DT/N_SUB) -- a fixed constant for the run,
 !>   chosen from Stage 2's empirical stability data for a given

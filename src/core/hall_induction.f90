@@ -13,7 +13,7 @@ MODULE HALL_INDUCTION
 !> F_HALL is a plain REAL(dp) scalar, spatially uniform, unless the
 !> optional F_HALL_PROFILE argument is present (one value per radial
 !> row, e.g. from CRUST_CONDUCTIVITY::ETA_AND_F_HALL_AT's self-consistent
-!> f_H(r)=c/(4*pi*e*n_e(r))) -- absent, behavior is bit-identical to the
+!> `f_H(r)=c/(4*pi*e*n_e(r))`) -- absent, behavior is bit-identical to the
 !> uniform case (test_hall_induction.f90 confirms this).
 !>
 !> @warning Index-order care: the four terms below use TWO different
@@ -37,8 +37,8 @@ MODULE HALL_INDUCTION
 !>   zero regardless of coupling, so skipping it changes nothing). This
 !>   is what makes a sparse/growing-from-a-single-mode state (e.g. an
 !>   axisymmetric cascade seeded from one mode) cheap even at LMAX=30,
-!>   where the full (LMAX+1)**2=961-mode space would otherwise force an
-!>   infeasible ~961**3 raw loop. (2) The target m is forced to l+l' by
+!>   where the full `(LMAX+1)**2=961`-mode space would otherwise force an
+!>   infeasible `~961**3` raw loop. (2) The target m is forced to l+l' by
 !>   the coupling coefficients' own selection rule (GWI/GWJ vanish unless
 !>   m=l+l'), so for each active (k,l),(k',l') pair only ONE m is ever
 !>   evaluated (computed directly, not searched), and n is restricted to
@@ -46,8 +46,8 @@ MODULE HALL_INDUCTION
 !>   GWI/GWJ are zero outside it). What's NOT yet done: even within an
 !>   active pair's own bracket precompute, the per-radial-node cost is
 !>   still full (N_R each); for a genuinely dense/high-order state (most
-!>   of the (LMAX+1)**2 modes populated) this reduces to the previously
-!>   documented O(Nlm**3 * N_R) worst case -- deferred until a workload
+!>   of the `(LMAX+1)**2` modes populated) this reduces to the previously
+!>   documented `O(Nlm**3 * N_R)` worst case -- deferred until a workload
 !>   actually needs it, per the project's own Hall-regime design plan
 !>   (see ROADMAP.md).
 USE KINDS,            ONLY: dp, i4
@@ -64,7 +64,7 @@ CONTAINS
 !> @param PHI, PSI Current state (poloidal/toroidal potentials).
 !> @param OPS Radial derivative operators (D1, D2) PHI/PSI were built on.
 !> @param RGRID Radial grid PHI/OPS were built on.
-!> @param F_HALL Hall prefactor c/(4*pi*e*n_e), spatially uniform unless
+!> @param F_HALL Hall prefactor `c/(4*pi*e*n_e)`, spatially uniform unless
 !>   F_HALL_PROFILE is present (see module header).
 !> @param F_HALL_PROFILE Optional per-radial-row Hall prefactor (size
 !>   RGRID%N), overriding F_HALL row-by-row when present.
