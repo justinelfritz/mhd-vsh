@@ -26,6 +26,84 @@ driver, which itself now supports checkpoint/restart
 docs, `ford project.md` → `docs/index.html`) for the module-by-module
 reference.
 
+## Recently resolved (2026-08-23, latest)
+
+**Non-monotonic `eta(r)`, root cause and fix: replaced NSCool's spliced
+GYP/PBHY conductivity with a single, un-spliced formula from Potekhin's
+own actively-maintained `conduct21.f`.** After the GYP/PBHY dispatch fix
+below, the user flagged the outer-crust `eta(r)` as still non-monotonic.
+Investigation (standalone F77 harnesses against NSCool's own unmodified
+`conductivity_crust.f`) found the dispatch fix's remaining discontinuity
+was genuine, not cosmetic: at the same density and composition on both
+sides of NSCool's rho=6e7 g/cm**3 switch, `con_e_phon_ion_GYP` and
+`con_env_e_phon_ion_PBHY` disagree by ~44x -- an artifact of splicing
+two independently-fit 2001-era formulas, not a porting bug. Worse, the
+switch density that would make them agree turned out to be strongly
+temperature-dependent (~6e7 at T=1e8 K, ~7.9e9 at T=1e9 K, no agreement
+at all within either formula's own valid range at T>=3e9 K), so no
+single fixed threshold could ever be right in general.
+
+Per user direction, researched whether a literature formula avoids the
+split entirely rather than patching the splice. Found it: Alexander
+Potekhin's own current conductivity code (`conduct21.f`,
+http://www.ioffe.ru/astro/conduct/, updated 2021) takes finite nuclear
+size (`xnuc`,`xnuct`) as a CONTINUOUS input to one formula (`CONDUCT`/
+`ThAv18`/`COUL19`), not a branch selector -- no seam by construction.
+Ported the full B=0/Zimp=0-reachable dependency chain (10 routines:
+`CONDUCT`, `ThAv18`, `ThAvI18`, `COUL19`, `COULAN3`, `CHEMPOT`,
+`CHEMP99`, `FERINV`, `EXPINT`, `TAUEESY`) into
+`CRUST_CONDUCTIVITY::CONDUCT_TRANSPORT`, verified against two
+independent standalone harnesses (one at the original's own hardcoded
+`xnuc=0`, one against a COMMON-block-patched copy exposing `xnuc` as a
+real input, fed `OYAFORM`'s own already-tested density-dependent
+values). `CON_CRUST` is now a thin wrapper (`OYAFORM` + one call to
+`CONDUCT_TRANSPORT`) with no density threshold anywhere in it. Old
+`CON_E_PHON_ION_GYP`/`CON_ENV_E_PHON_ION_PBHY`/`GET_LAM`/`EXP_INT`
+removed as superseded/dead code, along with `CON_CRUST`'s now-meaningless
+`NU_E_S`/`NU_E_L` outputs (confirmed already unused at the one call
+site). Regenerated `eta(r)`: no row-to-row jump exceeds 1.5x anywhere
+across all 387 crust rows (was ~4400% at the old seam). 14/14 `ctest`
+passing (`test_crust_conductivity.f90` fully rewritten, 22 checks).
+Two genuine latent bugs found in the ORIGINAL `conduct21.f` while
+reading it line-by-line (an unassigned `C13` variable in `COUL19`, and
+a `CITL`/`CILT` variable-name mismatch in `TAUEESY`'s high-degeneracy
+branch) were preserved faithfully (both confirmed to read as an
+effectively-zero, uninitialized SAVE'd F77 scalar), not silently fixed
+-- see `crust_conductivity.f90`'s own module header for the full
+writeup and citations. Magnetic-field and impurity-scattering branches
+are ported (not stubbed) for interface completeness but remain
+unverified -- no regression coverage exists for `B0>0`, still an open
+gap (same one this project has had since the original TOV/EOS port).
+
+## Recently resolved (2026-08-23, even newer)
+
+- **`CRUST_CONDUCTIVITY` was missing NSCool's own crust/envelope
+  density-regime dispatch, causing a spurious `eta(r)` blowup in the
+  outer crust -- found and fixed.** Discovered via a side-by-side
+  comparison of the old (EOSNS-based, `develop` branch) and new
+  (NSCool-based) EOS profiles: the new port's `eta` reached
+  `~1e19`-`1e20` km**2/yr in the outermost few rows (rho as low as ~8
+  g/cm**3), 17-18 orders of magnitude above the old port's comparable
+  value (`~1e2`) at similar density. Root cause: NSCool's own top-level
+  `con_crust` dispatcher only calls `con_e_phon_ion_GYP` for
+  `rho>=6e7 g/cm**3` ("crust regime"); below that it switches to a
+  different routine, `con_env_e_phon_ion_PBHY` ("envelope regime",
+  explicitly marked "valid only at Rho < 10^10 g/cm**3" in its own
+  header). The initial port called `CON_E_PHON_ION_GYP` unconditionally
+  across the whole crust, including well below its own validity floor.
+  Fixed by porting `con_env_e_phon_ion_PBHY` as
+  `CRUST_CONDUCTIVITY::CON_ENV_E_PHON_ION_PBHY` and adding a new
+  `CON_CRUST` dispatcher (the density-threshold axis only -- NSCool's
+  *other* dispatch axis, a Coulomb-coupling-parameter solid/liquid
+  split within the crust regime, doesn't change which base routine is
+  called for the `icon_crust=3`/GYP path this port uses, so it wasn't
+  needed). Confirmed against the original, unmodified source directly
+  (not just the port): the envelope routine gives `sigma~2e15 s**-1` at
+  the same point GYP gave `sigma~1e-3 s**-1`. `test_crust_conductivity.f90`
+  extended with 2 new cases (the envelope routine alone, plus the
+  dispatcher itself at both a crust- and envelope-regime density); full
+  suite still 14/14.
+
 ## Recently resolved (2026-08-23, newest)
 
 - **TOV/EOS solver re-ported from Dany Page's NSCool, replacing the
