@@ -61,14 +61,17 @@ USE IO_CHECKPOINT,      ONLY: WRITE_CHECKPOINT, READ_CHECKPOINT
 IMPLICIT NONE
 
 INTEGER(KIND=i4), PARAMETER :: N_R     = 40
-! Crust extent of the M=1.40 reference star (rhocgs=9.88d14 g/cm**3),
-! from mhdvsh_tov (src/core/tov_solver.f90 -- ported TOV solver,
-! regression-tested against ~/Desktop/EOSNS/fort.34/PL.DAT), superseding
-! the earlier 9.0/10.0 km placeholder. Rerunning this driver's own
-! dt-sweep/1000yr archive at these corrected radii is deferred (see the
-! TOV/EOS port's own plan notes), not part of this update.
-REAL(KIND=dp),    PARAMETER :: R_MIN   = 10.8033325018_dp   ! km -- core-crust boundary
-REAL(KIND=dp),    PARAMETER :: R_MAX   = 11.6982211606_dp   ! km -- stellar surface
+! Crust extent of the M=1.40 reference star (nbar_central=0.5447307
+! fm**-3), from mhdvsh_tov (src/core/tov_solver.f90 -- NSCool-based TOV
+! solver, ported from Dany Page's NSCool, ASCL 1609.009, regression-
+! tested against its own bundled Prof_APR_Cat_1.4.dat), superseding the
+! prior EOSNS-based port's 10.8033/11.6982 km values (a different,
+! also-real crust extent from a different EOS table/TOV algorithm, not
+! a placeholder being corrected). Rerunning this driver's own
+! dt-sweep/1000yr archive at these radii is deferred (see the NSCool
+! port's own plan notes), not part of this update.
+REAL(KIND=dp),    PARAMETER :: R_MIN   = 10.3029378_dp   ! km -- core-crust boundary
+REAL(KIND=dp),    PARAMETER :: R_MAX   = 11.5632834_dp   ! km -- stellar surface
 INTEGER(KIND=i4), PARAMETER :: LMAX    = 30
 REAL(KIND=dp),    PARAMETER :: ETA     = 1.0E-6_dp ! km**2/yr -- realistic crustal value, per user (2026-08-21): 1e-8 to 1e-5 range
 REAL(KIND=dp),    PARAMETER :: F_HALL  = 0.01_dp  ! km**2/(1e12 G)/yr

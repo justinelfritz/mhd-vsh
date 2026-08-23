@@ -15,14 +15,81 @@ case) — each producing a full time-resolved energy-*balance* plot on
 every build (`E_poloidal`, `E_toroidal`, Joule dissipation, Poynting
 flux — plus Hall Poynting for the combined regime — and their balance
 residual). A ported TOV+crust-EOS solver (`tov_solver.f90`,
-`crust_conductivity.f90`, `app/mhdvsh_tov.f90`) supplies real
-`n_e(r)`/`eta(r)`/`f_H(r)` profiles, and a dynamic Hall-CFL-limited
-timestep (`TIMESTEPPER::RUN_ADAPTIVE`, `app/mhdvsh_hall_adaptive.f90`)
-is available alongside the fixed-`dt` driver, which itself now supports
-checkpoint/restart (`io_checkpoint.f90`) — see "Recently resolved"
-below for all three. 14/14 `ctest` targets passing. See `project.md`
-(FORD-generated API docs, `ford project.md` → `docs/index.html`) for the
-module-by-module reference.
+`crust_conductivity.f90`, `app/mhdvsh_tov.f90` -- ported from Dany
+Page's NSCool, ASCL 1609.009, replacing an earlier port from a private,
+uncredited source) supplies real `n_e(r)`/`eta(r)`/`f_H(r)` profiles,
+and a dynamic Hall-CFL-limited timestep (`TIMESTEPPER::RUN_ADAPTIVE`,
+`app/mhdvsh_hall_adaptive.f90`) is available alongside the fixed-`dt`
+driver, which itself now supports checkpoint/restart
+(`io_checkpoint.f90`) — see "Recently resolved" below for all three.
+14/14 `ctest` targets passing. See `project.md` (FORD-generated API
+docs, `ford project.md` → `docs/index.html`) for the module-by-module
+reference.
+
+## Recently resolved (2026-08-23, newest)
+
+- **TOV/EOS solver re-ported from Dany Page's NSCool, replacing the
+  earlier EOSNS-based port.** Per user: switch to a properly citable
+  source (NSCool has an ASCL registration and associated papers;
+  EOSNS was a private research code with no formal citation trail) --
+  `src/core/tov_solver.f90`, `eos_table.f90`, `crust_conductivity.f90`
+  now port NSCool's `TOV/TOV.f` (RK4-in-radius-r integration, a
+  genuinely different numerical method than the prior RK45-in-log(P)
+  port -- NSCool's own heuristic adaptive step size, not an embedded-
+  error scheme) and `Code/conductivity_crust.f`'s `con_e_phon_ion_GYP`
+  + `OYAFORM` (electron-phonon/electron-ion crust conductivity +
+  density-only nuclear-structure fit). Investigated by downloading and
+  reading NSCool's actual source directly (`NSCool.tar.gz`, public, no
+  access gate), not from secondhand summaries -- see the design plan's
+  own addendum for the full writeup.
+  **Physics is unchanged, not upgraded**: `con_e_phon_ion_GYP`'s own
+  header cites the *same two papers* (Potekhin 1999 A&A 346:345,
+  Gnedin et al. 2001 MNRAS 324:725) the prior port already used --
+  this replacement changes whose citable implementation supplies the
+  physics, not the underlying physics itself (per user's own explicit
+  choice of the GYP path over NSCool's different default Itoh+
+  Yakovlev-Urpin conductivity formulation).
+  **A real transcription bug was found and fixed during regression
+  testing**: the first RK4 stage of the TOV integration mistakenly
+  called the RHS routine instead of the original's explicit `k1=l1=
+  m1=0` (which avoids a division-by-zero at r=0) -- caught because the
+  post-fix `EM(1)` value matched NSCool's own bundled reference output
+  to 9 significant figures, whereas the buggy version was off by ~50%
+  at that same point. Final `M`/`R` now match that reference to
+  `2e-7`/`3e-4` relative (the small residual `R` difference is traced,
+  not assumed, to the integration's extreme low-pressure tail -- see
+  `tov_solver.f90`'s own header). Also found (independently confirmed
+  via `-fdefault-real-8`, same technique as before) the identical
+  single-precision-literal quirk the prior port's conductivity code
+  had, this time in `conductivity_crust.f`.
+  **Two real physics capabilities were lost in this switch, disclosed
+  rather than silently dropped**: no magnetic-field dependence at all
+  (weaker even than the prior port's own dormant B-quantization
+  branch), and no impurity-scattering treatment (the prior port's
+  `COULIN`+`COUL99I` combination has no GYP-path equivalent).
+  **`TOV_PROFILE_T`'s composition fields (`AH`/`ZH`/`XH`/`YE`/`YN`/
+  `A_TABLE`) were dropped**, a deviation from the approved plan's own
+  "same shape" wording, made once implementation revealed NSCool's
+  `OYAFORM` derives Z/A directly from density with no need for a
+  pre-tabulated per-row composition at all (and threading it through
+  `TOV_PROFILE_T` would have created a circular module dependency,
+  since `CRUST_CONDUCTIVITY` already depends on `TOV_SOLVER`). Crust-
+  row filtering now uses a plain density threshold
+  (`RHOCGS<=2.2e14 g/cm**3`, matching a threshold already present in
+  both codebases) instead of the old `A_TABLE>0` gate.
+  **`ETA_AND_F_HALL_AT` simplified**: `con_e_phon_ion_GYP` returns
+  electrical conductivity `sigma` directly, so `eta=c**2/(4*pi*sigma)`
+  no longer needs the prior port's `sigmae=3.26*tau*nel/meff`
+  combination step.
+  `app/mhdvsh_hall.f90`/`mhdvsh_hall_adaptive.f90`'s `R_MIN`/`R_MAX`
+  updated to the new port's own crust extent (`10.3029`-`11.5633` km,
+  down from `10.8033`-`11.6982` km -- a different, also-real crust
+  extent from a different EOS table, not a placeholder correction).
+  `data/eos/lowd-eos.ja.tab`/`.apr.tab` removed (unreadable by the new
+  loader's format), replaced by `data/eos/APR_EOS_Cat.dat`. All three
+  regression tests (`test_eos_table`, `test_tov_solver`,
+  `test_crust_conductivity`) rewritten against the new interfaces and
+  reference values; full suite still 14/14 passing.
 
 ## Recently resolved (2026-08-21, newest)
 
