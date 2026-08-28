@@ -1,64 +1,63 @@
-!> Regression test for TOV_SOLVER::SOLVE_TOV_STAR against the real,
-!> already-solved 2015 reference output (~/Desktop/EOSNS/fort.34,
-!> PL.DAT, the M=1.40 star at rhocgs=9.88d14 g/cm**3) -- an
-!> independent check grounded in genuinely prior, non-self-referential
-!> results, not a self-consistency check against this port's own code.
+!> Regression test for TOV_SOLVER::SOLVE_TOV_STAR against Dany Page's
+!> NSCool's own bundled reference output (`~NSCool/TOV/Profile/
+!> Prof_APR_Cat_1.4.dat`, `TOV/Production/prod_APR_EOS_Cat.dat`, an
+!> M=1.40 star built from the bundled `APR_EOS_Cat.dat`, now
+!> `data/eos/APR_EOS_Cat.dat` in this repo) -- an independent check
+!> grounded in genuinely prior, non-self-referential results, not a
+!> self-consistency check against this port's own code.
 !>
-!> Reference values below were read directly off fort.34's first row
-!> (`10.8033325018  0.25088E-02  0.16233E+03  0.14627E+03  0.12200E+15`
-!> = rad_km, n_e_fm-3, meff, tau, rhocgs) and PL.DAT's/nstot.f's own
-!> printed M/R summary for this star (Radius=11.698..., M=1.40088
-!> Msun) -- confirmed by rebuilding the original, unmodified F77 source
-!> and re-deriving these same numbers directly (see this port's own
-!> commit history/plan notes), not copied blind from file contents.
+!> @warning Radius tolerance is looser than mass: `M` matches the
+!>   reference to full displayed precision, but `R` differs by ~0.03%
+!>   -- traced (not assumed) to the integration's extreme low-pressure
+!>   tail, where the step-size heuristic's own sensitivity amplifies
+!>   tiny bracket-search differences between this port's bisection
+!>   (EOS_TABLE::LOCATE_TABLE) and the original's forward-cached-index
+!>   search. See TOV_SOLVER's own module header for the full writeup,
+!>   including the real transcription bug (a mishandled first RK4
+!>   stage) this same regression check caught and confirmed fixed.
 PROGRAM TEST_TOV_SOLVER
 USE KINDS,      ONLY: dp, i4
 USE TOV_SOLVER, ONLY: TOV_PROFILE_T, SOLVE_TOV_STAR
 IMPLICIT NONE
 
-REAL(KIND=dp), PARAMETER :: RHOCGS  = 9.88E14_dp
+REAL(KIND=dp), PARAMETER :: NBAR_CENTRAL = 0.5447307_dp   ! fm**-3, M=1.40 reference star
 INTEGER(KIND=i4), PARAMETER :: NPOINTS = 414
 REAL(KIND=dp), PARAMETER :: TOL_TIGHT = 1.0E-3_dp
-REAL(KIND=dp), PARAMETER :: TOL_LOOSE = 2.0E-2_dp
+REAL(KIND=dp), PARAMETER :: TOL_RADIUS = 5.0E-4_dp
+REAL(KIND=dp), PARAMETER :: RHOL_CGS = 2.2E14_dp
 
 TYPE(TOV_PROFILE_T) :: PROFILE
-INTEGER(KIND=i4) :: N_FAIL, I, I_FIRST
-REAL(KIND=dp) :: NEL_CGS_FIRST, NEL_FM3_REF
+INTEGER(KIND=i4) :: N_FAIL, I, I_FIRST_CRUST
 
 N_FAIL = 0
-CALL SOLVE_TOV_STAR(RHOCGS, 'data/eos/lowd-eos.ja.tab', NPOINTS, PROFILE)
+CALL SOLVE_TOV_STAR(NBAR_CENTRAL, 'data/eos/APR_EOS_Cat.dat', NPOINTS, PROFILE)
 
-CALL CHECK_CLOSE("radius_km",       PROFILE%RADIUS_KM, 11.6982211606_dp, TOL_TIGHT, N_FAIL)
-CALL CHECK_CLOSE("mass_msun",       PROFILE%MASS_MSUN, 1.40088_dp,       TOL_TIGHT, N_FAIL)
+CALL CHECK_CLOSE("radius_km", PROFILE%RADIUS_KM, 11.567180107_dp, TOL_RADIUS, N_FAIL)
+CALL CHECK_CLOSE("mass_msun", PROFILE%MASS_MSUN, 1.400000000_dp, TOL_TIGHT,  N_FAIL)
 
-! First crust row (A_TABLE>0) should reproduce fort.34's own first row
-! (10.8033325018 km, n_e=0.25088d-2 fm**-3, rhocgs=0.12200d15 g/cm**3)
-! to close precision, since it sits right at the crust's own upper
-! (highest-density) edge, insensitive to the two ports' differing
-! NPOINTS log-pressure step count.
-I_FIRST = 0
-DO I = 1, PROFILE%N
-  IF (PROFILE%A_TABLE(I) > 0.0_dp) THEN
-    I_FIRST = I
-    EXIT
-  END IF
-END DO
-CALL CHECK_TRUE("crust_region_found", I_FIRST > 0, N_FAIL)
-
-IF (I_FIRST > 0) THEN
-  CALL CHECK_CLOSE("crust_first_row_r_km", PROFILE%R(I_FIRST), 10.8033325018_dp, TOL_TIGHT, N_FAIL)
-  CALL CHECK_CLOSE("crust_first_row_rhocgs", PROFILE%RHOCGS(I_FIRST), 1.2200E14_dp, TOL_LOOSE, N_FAIL)
-
-  NEL_FM3_REF = 0.25088E-02_dp
-  NEL_CGS_FIRST = PROFILE%NEL(I_FIRST) * 1.0E39_dp   ! fm**-3 -> cm**-3, matching CRUST_CONDUCTIVITY's own conversion
-  CALL CHECK_CLOSE("crust_first_row_n_e_cm3", NEL_CGS_FIRST, NEL_FM3_REF*1.0E39_dp, TOL_LOOSE, N_FAIL)
-END IF
+! Center row (index 1) should reproduce the reference's own row-0
+! values: central density 9.925265d14 g/cm**3, central pressure
+! 1.45523d35 dyn/cm**2 (Prof_APR_Cat_1.4.dat's own first data row).
+CALL CHECK_CLOSE("central_rhocgs", PROFILE%RHOCGS(1), 9.925265E14_dp, TOL_TIGHT, N_FAIL)
+CALL CHECK_CLOSE("central_pcgs",   PROFILE%PCGS(1),   1.45523E35_dp,  TOL_TIGHT, N_FAIL)
+CALL CHECK_CLOSE("central_nbfm",   PROFILE%NBFM(1),   NBAR_CENTRAL,   TOL_TIGHT, N_FAIL)
 
 ! Basic physical sanity: density should decrease monotonically from
 ! center to surface, and the last row should be at/near the surface.
 CALL CHECK_TRUE("density_decreases_outward", &
   ALL(PROFILE%RHOCGS(2:PROFILE%N) <= PROFILE%RHOCGS(1:PROFILE%N-1)), N_FAIL)
 CALL CHECK_CLOSE("last_row_at_surface", PROFILE%R(PROFILE%N), PROFILE%RADIUS_KM, TOL_TIGHT, N_FAIL)
+
+! Crust extent sanity: some rows should sit below the core-crust
+! boundary density (matching app/mhdvsh_tov.f90's own gate).
+I_FIRST_CRUST = 0
+DO I = 1, PROFILE%N
+  IF (PROFILE%RHOCGS(I) <= RHOL_CGS) THEN
+    I_FIRST_CRUST = I
+    EXIT
+  END IF
+END DO
+CALL CHECK_TRUE("crust_region_found", I_FIRST_CRUST > 0, N_FAIL)
 
 IF (N_FAIL > 0) THEN
   WRITE(*,'(A,I0,A)') "RESULT: FAILED - ", N_FAIL, " check(s) failed"

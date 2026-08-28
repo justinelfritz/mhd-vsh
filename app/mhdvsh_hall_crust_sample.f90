@@ -1,48 +1,44 @@
-!> Combined resistive+Hall regime driver: seeds a single poloidal mode
-!> on a shell grid, evolves it under HALL_REGIME (implicit diffusion +
-!> explicit Hall substeps, see hall_regime.f90's own header for the
-!> splitting/BC design), and reports magnetic energy before/after. This
-!> is the "primary interest" case -- resistive and Hall effects
-!> together, not either studied in isolation (see mhdvsh_diffusion.f90
-!> for pure diffusion, mhdvsh_hall_stability_experiment.f90 for pure
-!> Hall).
+!> Combined resistive+Hall regime driver -- identical grid/timestepper
+!> setup to app/mhdvsh_hall.f90 (same N_R, LMAX, R_MIN, R_MAX, DT, N_SUB,
+!> N_STEPS, seed IC), but with ETA/F_HALL replaced by an actual
+!> physically-sourced (eta,f_H) pair instead of mhdvsh_hall.f90's own
+!> round toy values (ETA=1e-6, F_HALL=0.01) -- a separate, deliberately
+!> non-overwriting comparison run, not a modification of the existing
+!> baseline driver (per user, 2026-08-24).
+!>
+!> ---------------------------------------------------------------------
+!> SIMULATION INPUT PROVENANCE (documented here for later review):
+!>   Source: results/eos_comparison/new_eos_profile.dat, row at
+!>     r_km=1.15570341E+01, rhocgs=4.68605102E+06, n_e_cm-3=1.31075626E+30
+!>     (produced by app/mhdvsh_tov.f90 from the current CONDUCT/COUL19-
+!>     based crust conductivity engine, src/core/crust_conductivity.f90,
+!>     see that module's own header for the underlying physics/citations).
+!>   ETA    = 1.03614247E-3 km**2/yr  (that row's own eta_km2_per_yr column)
+!>   F_HALL = 1.19580898E-2 km**2/(1e12 G)/yr  (that row's own f_hall column)
+!>   Selected by user directly from the profile data file (IDE selection,
+!>   2026-08-24) -- this radius sits in the outer-crust degenerate/
+!>   non-degenerate transition band (theta=kT/E_F ~ 0.5-0.6 at this
+!>   project's default T=1e9 K isothermal-crust assumption; see this
+!>   session's own eta(T) scaling discussion for that characterization).
+!>   All OTHER parameters (N_R, LMAX, R_MIN, R_MAX, DT, N_SUB, N_STEPS,
+!>   CHECKPOINT_EVERY, seed IC) are IDENTICAL to app/mhdvsh_hall.f90's
+!>   own values, unchanged, so this run is a controlled single-variable
+!>   (eta, f_H) comparison against that existing baseline -- not a
+!>   different grid/timestep/resolution study.
+!> ---------------------------------------------------------------------
 !>
 !> Optional command-line arguments (all positional, each requires the
-!> ones before it):
-!>   1: a file path to write a time-resolved energy-budget series to
-!>      (step, t, E_poloidal, E_toroidal, joule_dissipation_rate,
-!>      poynting_flux_rate, hall_poynting_flux_rate,
-!>      energy_balance_residual) -- every term in the combined balance
-!>      identity Edot_B,pol + Edot_B,tor = Edot_J + Edot_S,diffusion +
-!>      Edot_S,Hall (Hall's own Joule term is exactly zero, so it
-!>      doesn't appear -- see JOULE_DISSIPATION_RATE's own docstring),
-!>      plus that identity's residual. scripts/plot_energy_budget.py
-!>      needs no changes to plot this -- it's already written
-!>      generically against the column set.
-!>   2: a file path to write per-degree poloidal/toroidal energy to
-!>      (see LOG_ENERGY_BY_L).
-!>   3: a checkpoint file path -- if given, IO_CHECKPOINT::WRITE_CHECKPOINT
-!>      is called every CHECKPOINT_EVERY steps (plus once, unconditionally,
-!>      after the run completes) so a crash mid-run (see ROADMAP.md,
-!>      "Recently resolved (2026-08-21, even later)" -- the reason this
-!>      capability exists at all) loses at most CHECKPOINT_EVERY steps
-!>      of work, not the whole run.
-!>   4: a checkpoint file path to RESUME from (via
-!>      IO_CHECKPOINT::READ_CHECKPOINT) instead of starting from the
-!>      hardcoded seed IC at step 0 -- the loaded grid shape (N_R, LMAX,
-!>      R_MIN, R_MAX) is checked against this driver's own compiled-in
-!>      values before trusting the loaded state (see IO_CHECKPOINT's own
-!>      @warning: a checkpoint does not itself carry ETA/F_HALL/DT/N_SUB,
-!>      resuming means re-running this SAME driver, not a different
-!>      configuration). N_STEPS below is the TOTAL target step count,
-!>      not "how many more steps to run" -- resuming from step 12000
-!>      with N_STEPS=50000 runs the remaining 38000. Arguments 1/2's
-!>      files (if given) are appended to rather than overwritten, and
-!>      the row already written for the resumed step is not repeated.
+!> ones before it) -- identical meaning to mhdvsh_hall.f90's own:
+!>   1: energy-budget time series output path
+!>   2: per-degree poloidal/toroidal energy output path
+!>   3: checkpoint output path (written every CHECKPOINT_EVERY steps,
+!>      plus once unconditionally at the end)
+!>   4: checkpoint path to RESUME from
 !>
-!> Units: same convention as mhdvsh_diffusion.f90 (UNITS::ENERGY_UNIT_ERG/
-!> POWER_UNIT_ERG_PER_S applied only at this reporting layer).
-PROGRAM MHDVSH_HALL
+!> Units: same convention as mhdvsh_diffusion.f90/mhdvsh_hall.f90
+!> (UNITS::ENERGY_UNIT_ERG/POWER_UNIT_ERG_PER_S applied only at this
+!> reporting layer).
+PROGRAM MHDVSH_HALL_CRUST_SAMPLE
 USE, INTRINSIC :: IEEE_ARITHMETIC, ONLY: IEEE_VALUE, IEEE_QUIET_NAN
 USE KINDS,              ONLY: dp, i4
 USE VSH,                ONLY: YLM_INDEX
@@ -61,24 +57,17 @@ USE IO_CHECKPOINT,      ONLY: WRITE_CHECKPOINT, READ_CHECKPOINT
 IMPLICIT NONE
 
 INTEGER(KIND=i4), PARAMETER :: N_R     = 40
-! Crust extent of the M=1.40 reference star (nbar_central=0.5447307
-! fm**-3), from mhdvsh_tov (src/core/tov_solver.f90 -- NSCool-based TOV
-! solver, ported from Dany Page's NSCool, ASCL 1609.009, regression-
-! tested against its own bundled Prof_APR_Cat_1.4.dat), superseding the
-! prior EOSNS-based port's 10.8033/11.6982 km values (a different,
-! also-real crust extent from a different EOS table/TOV algorithm, not
-! a placeholder being corrected). Rerunning this driver's own
-! dt-sweep/1000yr archive at these radii is deferred (see the NSCool
-! port's own plan notes), not part of this update.
-REAL(KIND=dp),    PARAMETER :: R_MIN   = 10.3029378_dp   ! km -- core-crust boundary
-REAL(KIND=dp),    PARAMETER :: R_MAX   = 11.5632834_dp   ! km -- stellar surface
+REAL(KIND=dp),    PARAMETER :: R_MIN   = 10.3029378_dp   ! km -- core-crust boundary, matches mhdvsh_hall.f90
+REAL(KIND=dp),    PARAMETER :: R_MAX   = 11.5632834_dp   ! km -- stellar surface, matches mhdvsh_hall.f90
 INTEGER(KIND=i4), PARAMETER :: LMAX    = 30
-REAL(KIND=dp),    PARAMETER :: ETA     = 1.0E-6_dp ! km**2/yr -- realistic crustal value, per user (2026-08-21): 1e-8 to 1e-5 range
-REAL(KIND=dp),    PARAMETER :: F_HALL  = 0.01_dp  ! km**2/(1e12 G)/yr
-REAL(KIND=dp),    PARAMETER :: DT      = 0.01_dp  ! yr
-INTEGER(KIND=i4), PARAMETER :: N_SUB   = 10        ! -> dt_hall=0.001, per Stage 2's empirical data
-INTEGER(KIND=i4), PARAMETER :: N_STEPS = 200       ! TOTAL target step count (see CLI arg 4's own doc)
-INTEGER(KIND=i4), PARAMETER :: CHECKPOINT_EVERY = 50  ! tune coarser for long production runs
+! Physically-sourced (eta, f_H) pair -- see module header's PROVENANCE
+! block above for exact source row/radius/density. NOT a toy value.
+REAL(KIND=dp),    PARAMETER :: ETA     = 1.03614247E-3_dp ! km**2/yr
+REAL(KIND=dp),    PARAMETER :: F_HALL  = 1.19580898E-2_dp ! km**2/(1e12 G)/yr
+REAL(KIND=dp),    PARAMETER :: DT      = 0.01_dp  ! yr -- matches mhdvsh_hall.f90
+INTEGER(KIND=i4), PARAMETER :: N_SUB   = 10        ! matches mhdvsh_hall.f90
+INTEGER(KIND=i4), PARAMETER :: N_STEPS = 200       ! matches mhdvsh_hall.f90
+INTEGER(KIND=i4), PARAMETER :: CHECKPOINT_EVERY = 50
 INTEGER(KIND=i4), PARAMETER :: DATA_UNIT = 21
 INTEGER(KIND=i4), PARAMETER :: ENERGY_L_UNIT = 24
 REAL(KIND=dp),    PARAMETER :: PI = 3.14159265358979_dp
@@ -108,7 +97,7 @@ IF (RESUMING) THEN
     N_R_CK, LMAX_CK, R_MIN_CK, R_MAX_CK)
   IF (N_R_CK /= N_R .OR. LMAX_CK /= LMAX .OR. &
       ABS(R_MIN_CK-R_MIN) > GRID_TOL .OR. ABS(R_MAX_CK-R_MAX) > GRID_TOL) THEN
-    WRITE(*,'(A)') 'MHDVSH_HALL: checkpoint grid shape does not match this driver''s own parameters'
+    WRITE(*,'(A)') 'MHDVSH_HALL_CRUST_SAMPLE: checkpoint grid shape does not match this driver''s own parameters'
     WRITE(*,'(A,I0,A,I0,A,ES12.5,A,ES12.5)') '  checkpoint: N_R=', N_R_CK, ' LMAX=', LMAX_CK, &
       ' R_MIN=', R_MIN_CK, ' R_MAX=', R_MAX_CK
     WRITE(*,'(A,I0,A,I0,A,ES12.5,A,ES12.5)') '  this run:   N_R=', N_R, ' LMAX=', LMAX, &
@@ -121,8 +110,7 @@ ELSE
   CALL ALLOC_SPECTRAL_SCALAR(STATE%PHI, N_R, LMAX)
   CALL ALLOC_SPECTRAL_SCALAR(STATE%PSI, N_R, LMAX)
 
-  ! Single seed mode, same as app/mhdvsh_hall_stability_experiment.f90 --
-  ! sin() profile vanishes at both ends, Psi stays zero (never set).
+  ! Single seed mode, identical to mhdvsh_hall.f90's own IC.
   DO IR = 1, N_R
     STATE%PHI%COEF(IR, YLM_INDEX(1_i4,0_i4)) = &
       CMPLX(SIN(PI*(RGRID%R(IR)-R_MIN)/(R_MAX-R_MIN)), 0.0_dp, KIND=dp)
@@ -131,7 +119,7 @@ END IF
 
 N_STEPS_REMAINING = N_STEPS - ISTEP_START
 IF (N_STEPS_REMAINING <= 0) THEN
-  WRITE(*,'(A,I0,A,I0,A)') 'MHDVSH_HALL: checkpoint step ', ISTEP_START, &
+  WRITE(*,'(A,I0,A,I0,A)') 'MHDVSH_HALL_CRUST_SAMPLE: checkpoint step ', ISTEP_START, &
     ' already reaches or exceeds N_STEPS=', N_STEPS, ' -- nothing to do'
   STOP 1
 END IF
@@ -146,6 +134,23 @@ IF (WRITE_DATA) THEN
     OPEN(UNIT=DATA_UNIT, FILE=TRIM(DATA_PATH), STATUS='OLD', ACTION='WRITE', POSITION='APPEND')
   ELSE
     OPEN(UNIT=DATA_UNIT, FILE=TRIM(DATA_PATH), STATUS='REPLACE', ACTION='WRITE')
+    ! Full input provenance written into the data file itself (not just
+    ! the source) so the record survives independent of this file's own
+    ! future edits -- "document all simulation inputs for later review"
+    ! (user, 2026-08-24).
+    WRITE(DATA_UNIT,'(A)') '# MHDVSH_HALL_CRUST_SAMPLE run inputs:'
+    WRITE(DATA_UNIT,'(A,I0)')       '#   N_R          = ', N_R
+    WRITE(DATA_UNIT,'(A,I0)')       '#   LMAX         = ', LMAX
+    WRITE(DATA_UNIT,'(A,ES16.8,A)') '#   R_MIN        = ', R_MIN, ' km'
+    WRITE(DATA_UNIT,'(A,ES16.8,A)') '#   R_MAX        = ', R_MAX, ' km'
+    WRITE(DATA_UNIT,'(A,ES16.8,A)') '#   ETA          = ', ETA, ' km**2/yr'
+    WRITE(DATA_UNIT,'(A,ES16.8,A)') '#   F_HALL       = ', F_HALL, ' km**2/(1e12 G)/yr'
+    WRITE(DATA_UNIT,'(A,ES16.8,A)') '#   DT           = ', DT, ' yr'
+    WRITE(DATA_UNIT,'(A,I0)')       '#   N_SUB        = ', N_SUB
+    WRITE(DATA_UNIT,'(A,I0)')       '#   N_STEPS      = ', N_STEPS
+    WRITE(DATA_UNIT,'(A)') '#   eta/f_H source: results/eos_comparison/new_eos_profile.dat,' // &
+      ' row r_km=1.15570341E+01 rhocgs=4.68605102E+06 n_e_cm-3=1.31075626E+30'
+    WRITE(DATA_UNIT,'(A)') '#   seed IC: single mode Phi(l=1,m=0)=sin(pi*(r-R_MIN)/(R_MAX-R_MIN)), Psi=0'
     WRITE(DATA_UNIT,'(A)') '# step  t_yr  E_poloidal_erg  E_toroidal_erg' // &
       '  joule_dissipation_rate_erg_per_s  poynting_flux_rate_erg_per_s' // &
       '  hall_poynting_flux_rate_erg_per_s  energy_balance_residual_erg_per_s'
@@ -153,11 +158,6 @@ IF (WRITE_DATA) THEN
   PREV_E_POL = TOTAL_POLOIDAL_MAGNETIC_ENERGY(STATE%PHI, OPS, RGRID)
   PREV_E_TOR = TOTAL_TOROIDAL_MAGNETIC_ENERGY(STATE%PSI, RGRID)
   IF (.NOT. RESUMING) THEN
-    ! No previous sample exists yet to backward-difference against, so
-    ! the residual is undefined (not 0) at step 0 -- NaN leaves a
-    ! visible gap in the plot rather than implying a (meaningless)
-    ! perfect balance. On resume this row was already written by the
-    ! original run, so it's not repeated.
     WRITE(DATA_UNIT,'(I8,7ES16.8)') 0_i4, 0.0_dp, &
       PREV_E_POL*ENERGY_UNIT_ERG, PREV_E_TOR*ENERGY_UNIT_ERG, &
       JOULE_DISSIPATION_RATE(STATE%PHI, STATE%PSI, OPS, RGRID, ETA)*POWER_UNIT_ERG_PER_S, &
@@ -166,11 +166,6 @@ IF (WRITE_DATA) THEN
       IEEE_VALUE(1.0_dp, IEEE_QUIET_NAN)
   END IF
 
-  ! Per-degree magnetic energy (poloidal from Phi, toroidal from Psi) --
-  ! FIELD_DIAGNOSTICS::POLOIDAL_MAGNETIC_ENERGY_BY_L/
-  ! TOROIDAL_MAGNETIC_ENERGY_BY_L, same functions/convention
-  ! app/mhdvsh_hall_stability_experiment.f90 uses, now for the combined
-  ! resistive+Hall regime instead of pure Hall.
   WRITE_ENERGY_L = (COMMAND_ARGUMENT_COUNT() >= 2)
   IF (WRITE_ENERGY_L) THEN
     CALL GET_COMMAND_ARGUMENT(2, ENERGY_L_PATH)
@@ -203,9 +198,6 @@ ELSE
 END IF
 E1 = TOTAL_MAGNETIC_ENERGY(STATE%PHI, STATE%PSI, OPS, RGRID)
 
-! Unconditional final checkpoint, regardless of CHECKPOINT_EVERY
-! alignment, so a completed (or Ctrl-C'd) run always leaves a
-! checkpoint reflecting its true final state.
 IF (WRITE_CHECKPOINT_FLAG) THEN
   CALL WRITE_CHECKPOINT(TRIM(CHECKPOINT_PATH), N_STEPS, T_START + REAL(N_STEPS_REMAINING,KIND=dp)*DT, &
     STATE%PHI, STATE%PSI, RGRID)
@@ -214,7 +206,8 @@ END IF
 IF (WRITE_DATA) CLOSE(DATA_UNIT)
 IF (WRITE_ENERGY_L) CLOSE(ENERGY_L_UNIT)
 
-WRITE(*,'(A)')            'MHD-VSH combined resistive+Hall regime'
+WRITE(*,'(A)')            'MHD-VSH combined resistive+Hall regime -- crust-sampled (eta,f_H)'
+WRITE(*,'(A)')            '  eta/f_H source = new_eos_profile.dat, r=11.5570341 km, rho=4.68605102E+06 g/cm**3'
 WRITE(*,'(A,I0)')         '  N_r          = ', N_R
 WRITE(*,'(A,I0)')         '  Lmax         = ', LMAX
 WRITE(*,'(A,ES12.5,A)')   '  eta          = ', ETA, ' km**2/yr'
@@ -234,17 +227,8 @@ IF (WRITE_CHECKPOINT_FLAG) WRITE(*,'(A,A)') '  final checkpoint written to ', TR
 
 CONTAINS
 
-!> Matches TIMESTEPPER::REGIME_ON_STEP_I; logs every combined-regime
-!> energy-balance term (when WRITE_DATA) and writes a periodic
-!> checkpoint (when WRITE_CHECKPOINT_FLAG). ISTEP is RUN's own local
-!> counter (1..N_STEPS_REMAINING for THIS call) -- GLOBAL_ISTEP adds
-!> back ISTEP_START so logged step numbers and the checkpoint cadence
-!> are correct across a resume, not restarting from 1 each time.
-!> Residual = d(E_pol+E_tor)/dt (backward-differenced) minus
-!> (Edot_J + Edot_S,diffusion + Edot_S,Hall); per the combined balance
-!> identity this should sit at ~0. Same pattern as
-!> mhdvsh_diffusion.f90's LOG_ENERGY, extended with the Hall Poynting
-!> term and checkpointing.
+!> Matches TIMESTEPPER::REGIME_ON_STEP_I; see mhdvsh_hall.f90's own
+!> identical routine for the full explanation -- unchanged here.
 SUBROUTINE LOG_ENERGY(STATE, T, ISTEP)
   CLASS(*),         INTENT(IN) :: STATE
   REAL(KIND=dp),    INTENT(IN) :: T
@@ -279,10 +263,7 @@ SUBROUTINE LOG_ENERGY(STATE, T, ISTEP)
   END SELECT
 END SUBROUTINE LOG_ENERGY
 
-!> Writes one row to ENERGY_L_UNIT: step, t, POLOIDAL_MAGNETIC_ENERGY_BY_L
-!> (l=1..LMAX) then TOROIDAL_MAGNETIC_ENERGY_BY_L (l=1..LMAX), both in
-!> erg (l=0 omitted -- always exactly zero, see HALL_INDUCTION_RHS's own
-!> n=0 exclusion). Host-associates STATE/OPS/RGRID from the main program.
+!> Identical to mhdvsh_hall.f90's own -- see that file's docstring.
 SUBROUTINE LOG_ENERGY_BY_L(ISTEP_ARG, T_ARG)
   INTEGER(KIND=i4), INTENT(IN) :: ISTEP_ARG
   REAL(KIND=dp),    INTENT(IN) :: T_ARG
@@ -300,4 +281,4 @@ SUBROUTINE LOG_ENERGY_BY_L(ISTEP_ARG, T_ARG)
   WRITE(ENERGY_L_UNIT,'(A)') ''
 END SUBROUTINE LOG_ENERGY_BY_L
 
-END PROGRAM MHDVSH_HALL
+END PROGRAM MHDVSH_HALL_CRUST_SAMPLE

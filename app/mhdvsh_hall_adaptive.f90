@@ -39,9 +39,10 @@ IMPLICIT NONE
 
 INTEGER(KIND=i4), PARAMETER :: N_R     = 40
 ! Same crust extent as mhdvsh_hall.f90 (M=1.40 reference star, see its
-! own comment for provenance).
-REAL(KIND=dp),    PARAMETER :: R_MIN   = 10.8033325018_dp   ! km
-REAL(KIND=dp),    PARAMETER :: R_MAX   = 11.6982211606_dp   ! km
+! own comment for provenance -- updated together with it for the
+! NSCool-based TOV port).
+REAL(KIND=dp),    PARAMETER :: R_MIN   = 10.3029378_dp   ! km
+REAL(KIND=dp),    PARAMETER :: R_MAX   = 11.5632834_dp   ! km
 INTEGER(KIND=i4), PARAMETER :: LMAX    = 30
 REAL(KIND=dp),    PARAMETER :: ETA     = 1.0E-6_dp  ! km**2/yr
 REAL(KIND=dp),    PARAMETER :: F_HALL  = 0.01_dp    ! km**2/(1e12 G)/yr

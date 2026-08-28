@@ -63,6 +63,21 @@ REAL(KIND=dp) :: EXP_E_POL_MODE1, EXP_E_POL_MODE2
 REAL(KIND=dp) :: EXP_TC, GOT_TC, GOT_TC_PROFILE
 REAL(KIND=dp) :: J_RMS_EXP(N_R), DR_I, J_CELL
 REAL(KIND=dp), ALLOCATABLE :: F_HALL_PROFILE_TEST(:)
+! Profile-aware JOULE_DISSIPATION_RATE/POYNTING_FLUX_RATE/
+! HALL_POYNTING_FLUX_RATE checks (added 2026-08-24): a uniform profile
+! must reproduce the existing scalar-argument result bit-for-bit (same
+! precedent as hall_courant_timestep_profile_matches_scalar above); a
+! non-uniform profile (ETA_PROFILE(1)/=ETA_PROFILE(N)) must match a
+! hand-derived expectation built from the SAME FLUX_OUT/FLUX_IN/
+! EXP_JOULE values already computed above for the scalar checks, just
+! combined with the two boundary values (Poynting) or elementwise
+! (Joule) instead of one shared scalar.
+REAL(KIND=dp), ALLOCATABLE :: ETA_PROFILE_TEST(:), ETA_PROFILE_NONUNIF(:)
+REAL(KIND=dp), ALLOCATABLE :: F_HALL_PROFILE_TEST_HP(:)
+REAL(KIND=dp) :: GOT_EDOT_J_PROFILE, GOT_EDOT_S_PROFILE, GOT_EDOT_HS_PROFILE
+REAL(KIND=dp) :: GOT_EDOT_J_NONUNIF, EXP_EDOT_J_NONUNIF
+REAL(KIND=dp) :: GOT_EDOT_S_NONUNIF, EXP_EDOT_S_NONUNIF
+REAL(KIND=dp), PARAMETER :: ETA_INNER_TEST = 1.3_dp, ETA_OUTER_TEST = 0.2_dp
 INTEGER(KIND=i4) :: IR, N_FAIL
 
 CALL BUILD_RADIAL_GRID(RGRID, N_R, R_MIN, R_MAX, FULL_SPHERE=.FALSE.)
@@ -97,6 +112,17 @@ EXP_E_POL  = TRAPZ(EXP_POL, RGRID%R, N_R)
 EXP_E_TOR  = TRAPZ(EXP_TOR, RGRID%R, N_R)
 EXP_EDOT_J = -(ETA/(4.0_dp*pi)) * TRAPZ(EXP_JOULE, RGRID%R, N_R)
 
+! Non-uniform ETA_PROFILE for JOULE_DISSIPATION_RATE: a simple linear
+! ramp from ETA_INNER_TEST (row 1) to ETA_OUTER_TEST (row N_R), applied
+! elementwise to the SAME EXP_JOULE values already derived above --
+! reusing the closed-form integrand, not re-deriving the physics.
+ALLOCATE(ETA_PROFILE_NONUNIF(N_R))
+DO IR = 1, N_R
+  ETA_PROFILE_NONUNIF(IR) = ETA_INNER_TEST + &
+    (ETA_OUTER_TEST-ETA_INNER_TEST)*REAL(IR-1,KIND=dp)/REAL(N_R-1,KIND=dp)
+END DO
+EXP_EDOT_J_NONUNIF = -(1.0_dp/(4.0_dp*pi)) * TRAPZ(ETA_PROFILE_NONUNIF*EXP_JOULE, RGRID%R, N_R)
+
 ! ---- Per-degree-l poloidal energy: isolate mode1 (L1)/mode2 (L2)'s own
 ! contribution to EXP_POL above (they're additive, different l, so this
 ! is just splitting that same sum back into its two summands).
@@ -120,6 +146,11 @@ FLUX_IN  = LAMBDA1*(CMPLX(0.0_dp,0.0_dp,KIND=dp)*CONJG(PSI1) - CONJG(CMPLX(1.0_d
            LAMBDA2*(CMPLX(0.0_dp,0.0_dp,KIND=dp) - CONJG(CMPLX(0.0_dp,0.0_dp,KIND=dp))*CURV_PHI2)
 EXP_EDOT_S = -(ETA/(4.0_dp*pi)) * REAL(FLUX_OUT - FLUX_IN, KIND=dp)
 
+! Non-uniform ETA_PROFILE for POYNTING_FLUX_RATE: ETA_OUTER_TEST at the
+! outer boundary, ETA_INNER_TEST at the inner, applied to the SAME
+! FLUX_OUT/FLUX_IN already hand-derived above.
+EXP_EDOT_S_NONUNIF = -(1.0_dp/(4.0_dp*pi)) * REAL(ETA_OUTER_TEST*FLUX_OUT - ETA_INNER_TEST*FLUX_IN, KIND=dp)
+
 ! ---- Hall Poynting: own smaller mode set, own field pair ----
 ! All m=0 (axisymmetric), chosen so GWI(1,0,2,0,1,0) -- a triangle- and
 ! parity-valid triple (k=1,k'=2,n=1: |1-2|<=1<=3, 1+2+1=4 even) -- picks
@@ -137,6 +168,13 @@ PSI_H%COEF(:, YLM_INDEX(2,0)) = CMPLX(0.3_dp, 0.9_dp, KIND=dp)
 
 GOT_EDOT_HS = HALL_POYNTING_FLUX_RATE(PHI_H, PSI_H, OPS, RGRID, F_HALL)
 EXP_EDOT_HS = INDEPENDENT_HALL_POYNTING(PHI_H, PSI_H, OPS, RGRID, F_HALL, LMAX_H)
+
+! Uniform F_HALL_PROFILE must reproduce the scalar-F_HALL result
+! bit-for-bit (same precedent as hall_courant_timestep_profile_matches_scalar).
+ALLOCATE(F_HALL_PROFILE_TEST_HP(N_R))
+F_HALL_PROFILE_TEST_HP = F_HALL
+GOT_EDOT_HS_PROFILE = HALL_POYNTING_FLUX_RATE(PHI_H, PSI_H, OPS, RGRID, F_HALL, &
+  F_HALL_PROFILE=F_HALL_PROFILE_TEST_HP)
 
 ! ---- Hall-CFL Courant timestep: reuses the (PHI,PSI) mode pair and
 ! EXP_JOULE already derived above for the Joule-rate check -- EXP_JOULE
@@ -167,6 +205,16 @@ GOT_E_TOR   = TOTAL_TOROIDAL_MAGNETIC_ENERGY(PSI, RGRID)
 GOT_E_TOTAL = TOTAL_MAGNETIC_ENERGY(PHI, PSI, OPS, RGRID)
 GOT_EDOT_J  = JOULE_DISSIPATION_RATE(PHI, PSI, OPS, RGRID, ETA)
 GOT_EDOT_S  = POYNTING_FLUX_RATE(PHI, PSI, OPS, RGRID, ETA)
+
+! Uniform ETA_PROFILE must reproduce the scalar-ETA result bit-for-bit.
+ALLOCATE(ETA_PROFILE_TEST(N_R))
+ETA_PROFILE_TEST = ETA
+GOT_EDOT_J_PROFILE = JOULE_DISSIPATION_RATE(PHI, PSI, OPS, RGRID, ETA, ETA_PROFILE=ETA_PROFILE_TEST)
+GOT_EDOT_S_PROFILE = POYNTING_FLUX_RATE(PHI, PSI, OPS, RGRID, ETA, ETA_PROFILE=ETA_PROFILE_TEST)
+
+! Non-uniform ETA_PROFILE against the hand-derived expectations above.
+GOT_EDOT_J_NONUNIF = JOULE_DISSIPATION_RATE(PHI, PSI, OPS, RGRID, ETA, ETA_PROFILE=ETA_PROFILE_NONUNIF)
+GOT_EDOT_S_NONUNIF = POYNTING_FLUX_RATE(PHI, PSI, OPS, RGRID, ETA, ETA_PROFILE=ETA_PROFILE_NONUNIF)
 ALLOCATE(GOT_E_POL_BY_L(0:LMAX), GOT_E_TOR_BY_L(0:LMAX))
 GOT_E_POL_BY_L = POLOIDAL_MAGNETIC_ENERGY_BY_L(PHI, OPS, RGRID)
 GOT_E_TOR_BY_L = TOROIDAL_MAGNETIC_ENERGY_BY_L(PSI, RGRID)
@@ -199,6 +247,11 @@ CALL CHECK_TOL("current_density_squared_by_r", &
   MAXVAL(ABS(CURRENT_DENSITY_SQUARED_BY_R(PHI,PSI,OPS,RGRID)-EXP_JOULE)), N_FAIL, 1.0E-7_dp)
 CALL CHECK("hall_courant_timestep", ABS(GOT_TC-EXP_TC), N_FAIL)
 CALL CHECK("hall_courant_timestep_profile_matches_scalar", ABS(GOT_TC_PROFILE-GOT_TC), N_FAIL)
+CALL CHECK("joule_dissipation_rate_profile_matches_scalar", ABS(GOT_EDOT_J_PROFILE-GOT_EDOT_J), N_FAIL)
+CALL CHECK("poynting_flux_rate_profile_matches_scalar", ABS(GOT_EDOT_S_PROFILE-GOT_EDOT_S), N_FAIL)
+CALL CHECK("hall_poynting_flux_rate_profile_matches_scalar", ABS(GOT_EDOT_HS_PROFILE-GOT_EDOT_HS), N_FAIL)
+CALL CHECK("joule_dissipation_rate_nonuniform_profile", ABS(GOT_EDOT_J_NONUNIF-EXP_EDOT_J_NONUNIF), N_FAIL)
+CALL CHECK("poynting_flux_rate_nonuniform_profile", ABS(GOT_EDOT_S_NONUNIF-EXP_EDOT_S_NONUNIF), N_FAIL)
 
 IF (N_FAIL > 0) THEN
   WRITE(*,'(A,I0,A)') "RESULT: FAILED - ", N_FAIL, " check(s) failed"

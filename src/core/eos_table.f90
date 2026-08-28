@@ -1,131 +1,155 @@
 MODULE EOS_TABLE
-!> Tabulated crust/low-density equation-of-state loading and
-!> interpolation -- ported from ~/Desktop/EOSNS/src/geteost.f (its
-!> `ENTRY INITEOSTAB` for loading, both interpolation branches for
-!> lookup), replacing its `COMMON /eos/` file-scope state with an
+!> Tabulated dense-matter equation-of-state loading and interpolation --
+!> ported from Dany Page's NSCool (`astroscu.unam.mx/neutrones/NSCool`,
+!> ASCL entry 1609.009), `TOV/TOV.f`'s `subroutine eos` (table loading)
+!> and `function ener`/`function pres`/`function rho` (interpolation),
+!> replacing NSCool's own `common/eos_dat/` file-scope arrays with an
 !> explicit EOS_TABLE_T passed by the caller (this codebase's own
-!> convention -- RADIAL_GRID_T/RADIAL_OPERATOR_T are the precedent, not
-!> module-level SAVE'd globals, except where a regime's own init/advance
-!> split requires it as DIFFUSION_REGIME does).
+!> convention).
 !>
-!> Table file format (unchanged from `lowd-eos.ja.tab`/
-!> `lowd-eos.ja.apr.tab`): one row per row, six whitespace-separated
-!> columns -- baryon number density (`fm**-3`), mass density (`g/cm**3`),
-!> pressure (`dyn/cm**2` x1e-33... see LOAD_EOS_TABLE's own conversion,
-!> ported unchanged from the original), Z, A, neutron fraction.
+!> @warning Table file format: a fixed 6 header lines (`itext=6`,
+!>   coded literally in `eos()`, not read from the file's own header
+!>   row even though that row also happens to say 6 -- ported as coded,
+!>   matching this session's "port what's coded, not what's commented"
+!>   discipline), then rows of at least 3 whitespace-separated columns.
+!>   `eos()` auto-detects column order via a magnitude heuristic (see
+!>   LOAD_EOS_TABLE) rather than assuming a fixed order -- both branches
+!>   ported, even though the one EOS table shipped with this project
+!>   (`data/eos/APR_EOS_Cat.dat`) only exercises one of them.
 !>
-!> @warning Geometrized-unit conversion constants (the `1.602d0`,
-!>   `1.78d12`, `1.673d15` factors below) are copied byte-for-byte from
-!>   geteost.f -- these are the units bridge to nstot.f's `G=c=1` TOV
-!>   integration (TOV_SOLVER), not something to re-derive or "clean up".
+!> @warning Units: table values are read as literal cgs (`g/cm**3`,
+!>   `dyn/cm**2`, `fm**-3`) and converted to this port's own code units via
+!>   CONST/C2DG (see TOV_SOLVER's own header for the full unit-system
+!>   derivation -- length: km, mass: solar masses, density: solar
+!>   masses per `km**3`). These are NSCool's own 'cgs' input-mode
+!>   constants (`const=1/1.989d18`, `c2=9.d20`, TOV.f's `cread('cgs')`
+!>   branch) -- the only mode this port supports, matching what
+!>   produced the bundled reference output this port is regression-
+!>   tested against (`~NSCool/TOV/Profile/Prof_APR_Cat_1.4.dat`).
 USE KINDS, ONLY: dp, i4
 USE ODE_INTEGRATOR, ONLY: LOCATE_TABLE
 IMPLICIT NONE
 PRIVATE
 PUBLIC :: EOS_TABLE_T, LOAD_EOS_TABLE, EOS_AT_DENSITY, EOS_AT_PRESSURE
 
-!> One loaded, geometrized-unit-converted EOS table (see LOAD_EOS_TABLE).
-!> PT/RHOT are monotonic in the same sense (both increasing with row
-!> index), which LOCATE_TABLE relies on.
+!> One loaded, code-unit-converted EOS table. PT/RHOT are monotonic in
+!> the same sense (increasing with row index); NBART is baryon number
+!> density (`fm**-3`), unconverted (NSCool's own `eos()` never scales the
+!> `deos`/nbar column -- only pressure and mass density get the
+!> CONST/C2DG treatment). LOCATE_TABLE relies on PT's monotonicity.
 TYPE :: EOS_TABLE_T
   INTEGER(KIND=i4) :: N = 0
-  REAL(KIND=dp), ALLOCATABLE :: PT(:), RHOT(:), RHO0T(:), ZT(:), AT(:), XNT(:)
+  REAL(KIND=dp), ALLOCATABLE :: PT(:), RHOT(:), NBART(:)
 END TYPE EOS_TABLE_T
 
 CONTAINS
 
-!> Loads an EOS table file (e.g. `lowd-eos.ja.tab` or the APR variant
-!> `lowd-eos.ja.apr.tab`) and converts it into the geometrized (G=c=1)
-!> units TOV_SOLVER integrates in, given the same central-density
-!> length scale UL (`= 1/sqrt(rhocgs/c2dg)`, TOV_SOLVER's own choice)
-!> and c4dg used there. Ported from geteost.f's `ENTRY INITEOSTAB`,
-!> generalized to take the file path and unit-scale arguments rather
-!> than a hardcoded filename and module-global units -- this is what
-!> makes the APR variant (present in EOSNS but never wired to load
-!> there) trivially selectable, and what lets TOV_SOLVER own its own
-!> central-density-dependent length scale rather than this module
-!> needing to know about it.
+!> Loads an EOS table file (e.g. `data/eos/APR_EOS_Cat.dat`) and
+!> converts it into this port's code units. Ported from NSCool's
+!> `eos()`: skips a fixed 6 header lines (`itext=6`, coded literally),
+!> reads up to 1000 rows (`limit=1000`, also coded literally --
+!> APR_EOS_Cat.dat's own header row says 241 rows, but `eos()` never
+!> reads that value, matching the same "coded, not commented"
+!> transcription discipline as `TOV_SOLVER`), reading only the first 3
+!> whitespace-separated columns of each row (the table's own additional
+!> composition/species columns, present in APR_EOS_Cat.dat, are never
+!> read by `eos()` -- composition here comes from CRUST_CONDUCTIVITY's
+!> `OYAFORM` instead, not this table).
+!>
+!> Column-order auto-detection (ported from `eos()`'s own `ilist`
+!> logic, checked once on the first data row): if column 3 is small
+!> (<=10, i.e. a baryon density in `fm**-3`) and column 2 is large
+!> (>=1e30, i.e. a pressure in `dyn/cm**2`), the order is (rho, P, nbar)
+!> [`ilist=1`, APR_EOS_Cat.dat's own order]; if column 1 is small and
+!> column 3 is large, the order is (nbar, rho, P) [`ilist=2`]; anything
+!> else is a fatal error (matching `eos()`'s own `pause`).
 !>
 !> @param PATH EOS table file path.
-!> @param UL Length unit (central-density-dependent, from TOV_SOLVER).
-!> @param C4DG `c**4/G` in the same cgs-derived units nstot.f uses.
-!> @param TABLE Output: the loaded table, converted to TOV_SOLVER's
-!>   geometrized units.
-SUBROUTINE LOAD_EOS_TABLE(PATH, UL, C4DG, TABLE)
-  CHARACTER(LEN=*),   INTENT(IN)  :: PATH
-  REAL(KIND=dp),      INTENT(IN)  :: UL, C4DG
-  TYPE(EOS_TABLE_T),  INTENT(OUT) :: TABLE
-  INTEGER(KIND=i4), PARAMETER :: MAXROWS = 2000
-  INTEGER(KIND=i4), PARAMETER :: UNIT = 77
-  REAL(KIND=dp) :: X1, X2, X3, X4, X5, X6
-  REAL(KIND=dp) :: PT(MAXROWS), RHOT(MAXROWS), RHO0T(MAXROWS)
-  REAL(KIND=dp) :: ZT(MAXROWS), AT(MAXROWS), XNT(MAXROWS)
-  INTEGER(KIND=i4) :: I, IOS
+SUBROUTINE LOAD_EOS_TABLE(PATH, TABLE)
+  CHARACTER(LEN=*),  INTENT(IN)  :: PATH
+  TYPE(EOS_TABLE_T), INTENT(OUT) :: TABLE
+  INTEGER(KIND=i4), PARAMETER :: ITEXT = 6, MAXROWS = 1000
+  INTEGER(KIND=i4), PARAMETER :: UNIT = 78
+  REAL(KIND=dp), PARAMETER :: CONST = 1.0_dp/1.989E18_dp, C2DG = 9.0E20_dp
+  REAL(KIND=dp) :: X1, X2, X3
+  REAL(KIND=dp) :: PT(MAXROWS), RHOT(MAXROWS), NBART(MAXROWS)
+  INTEGER(KIND=i4) :: I, IOS, ILIST
 
   OPEN(UNIT=UNIT, FILE=TRIM(PATH), STATUS='OLD', ACTION='READ')
+  DO I = 1, ITEXT
+    READ(UNIT, *)
+  END DO
+
+  ILIST = 0
   DO I = 1, MAXROWS
-    READ(UNIT, *, IOSTAT=IOS) X1, X2, X3, X4, X5, X6
+    READ(UNIT, *, IOSTAT=IOS) X1, X2, X3
     IF (IOS /= 0) EXIT
-    PT(I)    = X3 * 1.602_dp * UL*UL / C4DG / 1.0E2_dp / 1.602E33_dp
-    RHOT(I)  = X2 * 1.602_dp * UL*UL / C4DG / 1.0E2_dp / 1.78E12_dp
-    RHO0T(I) = (X1 * 1.673E15_dp) * 1.602_dp * UL*UL / C4DG / 1.0E2_dp / 1.78E12_dp
-    ZT(I)    = X4
-    AT(I)    = X5
-    XNT(I)   = X6
+    IF (I == 1) THEN
+      IF (X3 <= 10.0_dp .AND. X2 >= 1.0E30_dp) THEN
+        ILIST = 1
+      ELSE IF (X1 <= 10.0_dp .AND. X3 >= 1.0E30_dp) THEN
+        ILIST = 2
+      ELSE
+        WRITE(*,'(A)') 'LOAD_EOS_TABLE: cannot determine EOS column ordering'
+        STOP 1
+      END IF
+    END IF
+    IF (ILIST == 1) THEN
+      RHOT(I) = X1;  PT(I) = X2;  NBART(I) = X3
+    ELSE
+      RHOT(I) = X2;  PT(I) = X3;  NBART(I) = X1
+    END IF
+    PT(I)   = PT(I)   * CONST / C2DG
+    RHOT(I) = RHOT(I) * CONST
   END DO
   CLOSE(UNIT)
 
   TABLE%N = I - 1
-  ALLOCATE(TABLE%PT(TABLE%N), TABLE%RHOT(TABLE%N), TABLE%RHO0T(TABLE%N))
-  ALLOCATE(TABLE%ZT(TABLE%N), TABLE%AT(TABLE%N), TABLE%XNT(TABLE%N))
+  ALLOCATE(TABLE%PT(TABLE%N), TABLE%RHOT(TABLE%N), TABLE%NBART(TABLE%N))
   TABLE%PT    = PT(1:TABLE%N)
   TABLE%RHOT  = RHOT(1:TABLE%N)
-  TABLE%RHO0T = RHO0T(1:TABLE%N)
-  TABLE%ZT    = ZT(1:TABLE%N)
-  TABLE%AT    = AT(1:TABLE%N)
-  TABLE%XNT   = XNT(1:TABLE%N)
+  TABLE%NBART = NBART(1:TABLE%N)
 END SUBROUTINE LOAD_EOS_TABLE
 
-!> Interpolates the EOS at a given (geometrized-unit) mass density RHO,
-!> log-log between the two bracketing table rows. Ported from
-!> geteost.f's `iflag=0` branch. STOPs if RHO is outside the table
-!> range (ported behavior -- the original treats this as fatal, not
-!> recoverable, since it means the caller's density grid has run past
-!> what the EOS covers).
-SUBROUTINE EOS_AT_DENSITY(TABLE, RHO, P, RHO0, Z, A, XN)
+!> Interpolates the EOS at a given (code-unit) baryon number density
+!> NBAR, log-log between the two bracketing table rows -- ported from
+!> `function pres(d)` (`d` there is NSCool's own `deos`/nbar array).
+!> STOPs if NBAR is outside the table range (`pres`'s own `i2.gt.limit`
+!> guard, ported as fatal here too).
+!>
+!> @param NBAR Baryon number density, `fm**-3` (unconverted, see module
+!>   header -- NOT a mass density, despite the name matching
+!>   TOV_SOLVER's usage: this is exactly what NSCool's own `rhoc` input
+!>   parameter means -- `den(0)=rhoc` in TOV.f's main loop).
+SUBROUTINE EOS_AT_DENSITY(TABLE, NBAR, P)
   TYPE(EOS_TABLE_T), INTENT(IN)  :: TABLE
-  REAL(KIND=dp),     INTENT(IN)  :: RHO
-  REAL(KIND=dp),     INTENT(OUT) :: P, RHO0, Z, A, XN
+  REAL(KIND=dp),     INTENT(IN)  :: NBAR
+  REAL(KIND=dp),     INTENT(OUT) :: P
   INTEGER(KIND=i4) :: J
-  REAL(KIND=dp) :: ALFA
 
-  CALL LOCATE_TABLE(TABLE%RHOT, RHO, J)
+  CALL LOCATE_TABLE(TABLE%NBART, NBAR, J)
   IF (J == 0 .OR. J == TABLE%N) THEN
-    WRITE(*,'(A)') 'EOS_AT_DENSITY: rho is out of the table'
+    WRITE(*,'(A)') 'EOS_AT_DENSITY: nbar is out of the table'
     STOP 1
   END IF
 
-  ALFA = LOG10(RHO/TABLE%RHOT(J)) / LOG10(TABLE%RHOT(J+1)/TABLE%RHOT(J))
-  P    = TABLE%PT(J) * 10.0_dp**(LOG10(TABLE%PT(J+1)/TABLE%PT(J)) / &
-         LOG10(TABLE%RHOT(J+1)/TABLE%RHOT(J)) * LOG10(RHO/TABLE%RHOT(J)))
-  RHO0 = TABLE%RHO0T(J) * 10.0_dp**(LOG10(TABLE%RHO0T(J+1)/TABLE%RHO0T(J)) / &
-         LOG10(TABLE%RHOT(J+1)/TABLE%RHOT(J)) * LOG10(RHO/TABLE%RHOT(J)))
-  Z  = TABLE%ZT(J)  + ALFA*(TABLE%ZT(J+1)  - TABLE%ZT(J))
-  A  = TABLE%AT(J)  + ALFA*(TABLE%AT(J+1)  - TABLE%AT(J))
-  XN = TABLE%XNT(J) + ALFA*(TABLE%XNT(J+1) - TABLE%XNT(J))
+  P = TABLE%PT(J) * 10.0_dp**(LOG10(TABLE%PT(J+1)/TABLE%PT(J)) / &
+      LOG10(TABLE%NBART(J+1)/TABLE%NBART(J)) * LOG10(NBAR/TABLE%NBART(J)))
 END SUBROUTINE EOS_AT_DENSITY
 
-!> Interpolates the EOS at a given (geometrized-unit) pressure P,
-!> log-log between the two bracketing table rows, returning the
-!> corresponding density RHO plus RHO0/Z/A/XN. Ported from geteost.f's
-!> `iflag/=0` branch -- this is the one TOV_SOLVER's DERIVS callback
-!> uses every integration step (pressure is the independent variable).
-SUBROUTINE EOS_AT_PRESSURE(TABLE, P, RHO, RHO0, Z, A, XN)
+!> Interpolates the EOS at a given (code-unit) pressure P, log-log
+!> between the two bracketing table rows, returning mass density RHO
+!> and baryon number density NBAR -- ported from `function ener(p)`
+!> (-> RHO) and `function rho(p)` (-> NBAR; confusingly named in the
+!> original -- it returns baryon density, not mass density, since it
+!> interpolates against `deos`). This is the pair TOV_SOLVER's RHS
+!> callback uses every integration step (pressure is the independent
+!> variable, matching `ener`/`rho`'s own usage in `twostep`).
+SUBROUTINE EOS_AT_PRESSURE(TABLE, P, RHO, NBAR)
   TYPE(EOS_TABLE_T), INTENT(IN)  :: TABLE
   REAL(KIND=dp),     INTENT(IN)  :: P
-  REAL(KIND=dp),     INTENT(OUT) :: RHO, RHO0, Z, A, XN
+  REAL(KIND=dp),     INTENT(OUT) :: RHO, NBAR
   INTEGER(KIND=i4) :: J
-  REAL(KIND=dp) :: ALFA
 
   CALL LOCATE_TABLE(TABLE%PT, P, J)
   IF (J == 0 .OR. J == TABLE%N) THEN
@@ -133,14 +157,10 @@ SUBROUTINE EOS_AT_PRESSURE(TABLE, P, RHO, RHO0, Z, A, XN)
     STOP 1
   END IF
 
-  ALFA = LOG10(P/TABLE%PT(J)) / LOG10(TABLE%PT(J+1)/TABLE%PT(J))
   RHO  = TABLE%RHOT(J) * 10.0_dp**(LOG10(TABLE%RHOT(J+1)/TABLE%RHOT(J)) / &
          LOG10(TABLE%PT(J+1)/TABLE%PT(J)) * LOG10(P/TABLE%PT(J)))
-  RHO0 = TABLE%RHO0T(J) * 10.0_dp**(LOG10(TABLE%RHO0T(J+1)/TABLE%RHO0T(J)) / &
+  NBAR = TABLE%NBART(J) * 10.0_dp**(LOG10(TABLE%NBART(J+1)/TABLE%NBART(J)) / &
          LOG10(TABLE%PT(J+1)/TABLE%PT(J)) * LOG10(P/TABLE%PT(J)))
-  Z  = TABLE%ZT(J)  + ALFA*(TABLE%ZT(J+1)  - TABLE%ZT(J))
-  A  = TABLE%AT(J)  + ALFA*(TABLE%AT(J+1)  - TABLE%AT(J))
-  XN = TABLE%XNT(J) + ALFA*(TABLE%XNT(J+1) - TABLE%XNT(J))
 END SUBROUTINE EOS_AT_PRESSURE
 
 END MODULE EOS_TABLE
