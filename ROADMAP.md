@@ -658,6 +658,116 @@ gap (same one this project has had since the original TOV/EOS port).
   transcribed into `field_diagnostics.f90`/a regime module -- still a
   `.tex`-only result at this point.
 
+## Thermal evolution (new major item, placeholder list, 2026-08-24)
+
+Flagged by the user (2026-08-24) as another major item on par with the
+magnetic-field regime work -- this is a FIRST-PASS enumeration of major
+steps, meant to be refined together, not a settled design. Nothing
+below is implemented yet. Two things already in this codebase are
+directly relevant starting points, not blank-slate work:
+
+- `CRUST_CONDUCTIVITY::CONDUCT_TRANSPORT` already computes thermal
+  conductivity (`CKAPPA`) as a real output -- currently discarded by
+  `CON_CRUST` (`ASSOCIATE(UNUSED_LAMBDA => LAMBDA_TH)`) since nothing
+  downstream needs it yet. Wiring in thermal evolution is partly a
+  matter of stopping throwing this value away.
+- `FIELD_DIAGNOSTICS::JOULE_DISSIPATION_RATE` already computes the
+  Ohmic/Joule heating rate from the magnetic field's own resistive
+  decay -- the natural local heat SOURCE term coupling the existing MHD
+  regime work to a thermal evolution equation (this coupling, "magneto-
+  thermal evolution," is the standard framework in the field -- see
+  Potekhin, Pons & Page 2015 (`Potekhin2015` in
+  `analytic_formulas/references.bib`), and Vigano et al. 2012, already
+  referenced in this project's own adaptive-timestep design note).
+- NSCool (already ported from, ASCL 1609.009, `Page2016NSCool` in
+  `references.bib`) is a full cooling code -- it already implements
+  essentially everything below (specific heat, all neutrino channels,
+  envelope relations, superfluid gaps) in its own Fortran source. Same
+  methodology as the EOS/conductivity port likely applies: read the
+  real source, port faithfully, verify against NSCool's own bundled
+  reference cooling curves, not re-derive from scratch.
+
+**Major steps to work through (order not yet decided):**
+
+1. **Governing equation and state-variable choice.** The user's own
+   framing: evolve local `T` directly, or derive it from another
+   evolved quantity (e.g. entropy per baryon, or the GR-redshifted
+   `T_infinity = T*exp(Phi)` convention standard cooling codes use to
+   simplify the relativistic heat equation). Needs picking before
+   anything else here is well-posed.
+2. **Specific heat capacity `C_v(rho,T)`** -- contributions from
+   degenerate electrons, ions/lattice (phonon heat capacity), and
+   neutrons/protons (suppressed by superfluid pairing where relevant,
+   see item 6).
+3. **Thermal conductivity `kappa(rho,T)`** -- electron contribution
+   already available via `CONDUCT_TRANSPORT`'s `CKAPPA` (see above);
+   still need the ion/lattice (phonon) contribution and, if superfluid
+   neutrons matter, their own transport contribution.
+4. **Neutrino emissivity `Q_nu(rho,T)`, by channel** -- the user's own
+   flagged items:
+   - Modified Urca (`n+n->n+p+e+nubar`, `n+p+e->n+n+nu`) -- the
+     "slow process," dominant in normal (non-superfluid) `npe` matter
+     at typical core densities.
+   - Direct Urca (`n->p+e+nubar`) -- the "fast process," but only
+     active above a proton-fraction/density threshold (a real
+     density-dependent on/off switch, not always contributing).
+   - Bremsstrahlung (`nn`, `np`, `pp`) -- usually subdominant, often
+     still included for completeness.
+   - Cooper pair breaking and formation (PBF) -- often the DOMINANT
+     channel for a period once the core cools through a superfluid
+     critical temperature; tied directly to item 6.
+   - Plasmon decay / photoneutrino / pair annihilation -- relevant
+     mainly at high `T` (young/hot stage), likely negligible once `T`
+     has dropped, but worth an explicit scope decision rather than a
+     silent omission.
+5. **Surface photon luminosity / envelope relation** -- the interior
+   temperature at the crust/envelope boundary isn't directly the
+   observed surface temperature; needs a `T_b -> T_eff` relation
+   (standard Potekhin/Gnedin/Yakovlev-style envelope models, also part
+   of NSCool) to get an actual radiative loss rate
+   `L_photon=4*pi*R**2*sigma*T_eff**4` at the outer boundary.
+6. **Superfluidity/superconductivity** -- neutron pairing (crust and
+   core, singlet/triplet) and proton pairing (singlet) suppress both
+   `C_v` and most neutrino channels, and enable the PBF channel (item
+   4). Pairing critical-temperature profiles `T_c(rho)` are themselves
+   genuinely model-dependent/uncertain in the literature -- likely needs
+   an explicit, disclosed choice of which gap model to adopt, not a
+   single "correct" answer.
+7. **Two-way coupling to the existing magnetic-field evolution** -- not
+   just Joule heating as a one-way source term (item above): `eta(r)`
+   itself is temperature-dependent (already established this session,
+   see the `eta(T)` scaling discussion), so a genuinely coupled
+   magneto-thermal evolution needs `eta(r,T(r,t))` recomputed as `T`
+   evolves, not held fixed for a whole run the way every regime driver
+   does today.
+8. **Scope decision: crust-only or whole-star.** The existing MHD
+   Hall/diffusion regimes deliberately stay crust-confined
+   (`R_MIN`/`R_MAX` = core-crust boundary to surface); NS cooling is
+   fundamentally a whole-star problem (core dominates the early heat
+   content and neutrino losses). Whether thermal evolution stays
+   crust-only (simpler, consistent with the existing MHD scope but
+   physically incomplete) or extends into the core (matching NSCool's
+   own scope, but a substantially bigger undertaking -- new EOS/TOV
+   regions, new microphysics) is an open, consequential scope call.
+9. **Numerics.** Thermal diffusion is expected to be stiff like the
+   existing magnetic diffusion (implicit treatment likely needed,
+   `DIFFUSION_REGIME`'s cached-LU-factorization approach is the
+   existing precedent) -- but with genuinely `T`-dependent coefficients
+   (`kappa(T)`, `C_v(T)`), the matrix itself changes as `T` evolves
+   (nonlinear diffusion), so the "factorize once, reuse forever" trick
+   doesn't carry over directly; would need re-factorization every step
+   or a linearization/Newton scheme. Also: thermal and magnetic
+   timescales may differ substantially, raising the same
+   splitting/substep-cadence questions `HALL_REGIME` already had to
+   answer for Hall vs. resistive terms.
+10. **Verification strategy.** Reproduce a published NS cooling curve
+    (`T_eff` vs. age) for a specific EOS/mass as the natural end-to-end
+    check -- NSCool's own bundled test cases, or a standard literature
+    benchmark (e.g. Yakovlev & Pethick 2004, ARA&A 42:169, a classic
+    review with benchmark curves -- not yet added to `references.bib`),
+    same "regression against a real, independent prior result" standard
+    this project has used for the TOV/EOS/conductivity ports.
+
 ## Analytical tasks (yours)
 
 1. **Dynamo / ion-MHD limit analytical work.** Explicitly deferred --
@@ -667,7 +777,64 @@ gap (same one this project has had since the original TOV/EOS port).
    a numerical-discretization question (does the FD scheme preserve an
    identity that's exact in the continuous theory), deferred rather
    than guessed at.
-3. **Dynamic `dt` from the magnetic Reynolds number `Rmag`** (per user,
+3. **Outer-boundary EOS/radial-grid truncation** -- **core design settled
+   and implemented, 2026-08-24** (was flagged as needing more thinking;
+   most of that thinking is now done). Where this came from: sizing a
+   real `tmax=1000` yr run with the actual crust `eta(r)`/`f_H(r)`
+   profile (not a uniform toy constant) showed Rmag reaching ~10^5-10^6
+   and the Hall-CFL-limited `dt` collapsing to ~1.6e-7 yr right at the
+   outermost few grid cells, making a literal run to the true surface
+   (`rho~7.85 g/cm**3`, `theta~1400`, deep non-degenerate)
+   computationally infeasible (~40 yr of wall-clock at `N_R=40`,
+   `LMAX=30`).
+
+   **Architecture decided**: `TOV_SOLVER`/the EOS solve is NOT modified
+   -- it stays a physics-blind, temperature-independent, reusable
+   utility giving the star's real M/R and full profile (needed for
+   diagnostics, and because `T_KELVIN` doesn't even exist inside the
+   cold-catalyzed-matter TOV integration, so a `theta`-based stopping
+   criterion has no principled home there). Truncation is purely a
+   per-run SIMULATION-domain choice, layered on top, matching this
+   project's existing physics-model/simulation-setup separation
+   (`LINEAR_SOLVE` is the precedent).
+
+   **Implemented**: `CRUST_CONDUCTIVITY::FIND_TRUNCATION_RADIUS(PROFILE,
+   T_KELVIN, R_TRUNC, THETA_MAX)` (new) -- computes `R_TRUNC` directly
+   from the degeneracy parameter `theta=kT/E_F` (default threshold 1.3,
+   matching the empirically-found `dr(r)` "knee" at T=1e9K, see
+   `results/eos_comparison/dr_vs_r_outercrust.png`) for whatever
+   `T_KELVIN`/profile a given run actually uses, replacing an earlier,
+   less principled hardcoded density constant. Verified directly: at
+   T=1e9K it reproduces the empirically-found knee (11.5621 km) almost
+   exactly, and at T=1e8K/3e9K it correctly gives very different
+   radii (11.5632/11.5596 km respectively) -- confirming `theta`, not a
+   fixed density, is the quantity that actually generalizes across
+   temperature. Wired into `app/mhdvsh_hall_crust_profile.f90` in place
+   of the old `RHO_TRUNCATE_CGS` constant; re-tested end to end
+   (14/14 `ctest` still passing, smoke test still stable/sane).
+
+   **Still open** (narrower than before, but genuinely unresolved):
+   - Is a hard cutoff at a `theta` threshold the right regularization,
+     or would a smoother taper/floor (on `n_e` or `F_HALL` directly)
+     behave better numerically? Not compared.
+   - The vacuum BC (`APPLY_VACUUM_BC_POLOIDAL`/`_TOROIDAL`,
+     `diffusion_regime.f90`) is applied at the truncated `R_MAX`, ~1.18 m
+     short of the star's actual physical surface at T=1e9K -- there
+     really is a thin, increasingly tenuous plasma layer beyond the
+     truncated boundary in reality, not literal vacuum. Treating that
+     gap as negligible is plausible (density/current there are tiny)
+     but hasn't been checked explicitly.
+   - Resolution-dependence: at `N_R=40` only 1 grid point currently
+     falls beyond the truncation radius. A finer `N_R` would place MORE
+     grid points in the steep-gradient region between the truncation
+     radius and the true surface -- not yet tested at any other `N_R`.
+   - `THETA_MAX=1.3` itself is still a pragmatic choice matching one
+     empirical finding, not derived from a stability criterion (e.g.
+     "the largest `theta` for which some target `dt`/wall-clock budget
+     is achievable") -- a more principled threshold could in principle
+     be computed from `HALL_COURANT_TIMESTEP` directly instead of
+     assumed.
+4. **Dynamic `dt` from the magnetic Reynolds number `Rmag`** (per user,
    2026-08-20) -- **substantially superseded, 2026-08-21**: rather than
    computing `Rmag = c*B/(4*pi*n_e*eta)` as its own diagnostic and
    deriving `dt` from it, the user instead specified a direct Hall-CFL
@@ -736,6 +903,53 @@ gap (same one this project has had since the original TOV/EOS port).
    configurations (different EOS models entirely, not just different
    central densities against the same crust table) would need their own
    table file in the same 6-column format -- not attempted.
+9. **Performance: long (multi-hundred/thousand-year) Hall-regime runs**
+   -- found while sizing an actual `tmax=1000` yr run with a real,
+   radially-varying `eta(r)`/`f_H(r)` profile (2026-08-24, see
+   `app/mhdvsh_hall_crust_profile.f90` and this session's own AWS-cost
+   estimate). Not yet acted on, each item independently verifiable:
+   - **`HALL_SUBSTEPS` (`src/regimes/hall/hall_regime.f90`) reallocates
+     its RK4 work arrays (`TMP_PHI`/`TMP_PSI`, `K1..K4`) via
+     `ALLOC_SPECTRAL_SCALAR` on every one of `N_SUB` explicit substeps,
+     every outer step**, instead of once at `HALL_INIT` time and reused.
+     Plausible explanation for an oddly high `sys` (vs `user`/real) time
+     ratio observed directly (`/usr/bin/time -v`: ~37s sys vs ~10s wall
+     on a 10-step run) -- ALLOCATE/DEALLOCATE churn in the hot loop, not
+     confirmed via a profiler yet.
+   - **OpenMP (`MHDVSH_ENABLE_OPENMP`, `CMakeLists.txt`) measured
+     net-negative at this problem's actual size** (`N_R=40`, `LMAX=30`):
+     a direct `OMP_NUM_THREADS=1` vs default (~5.5 cores active, per
+     `/usr/bin/time -v`'s "Percent of CPU") comparison on the same
+     30-step run showed the multi-threaded case slightly SLOWER (5.80s
+     vs 5.19s) -- thread spawn/sync overhead losing to the actual
+     per-core work at this grid size. Either gate OpenMP on problem size
+     or stop assuming it helps by default for small `N_R`/`LMAX` runs.
+   - **`RUN_ADAPTIVE`'s `DT_RECOMPUTE_EVERY` was set to 1 (not `N_SUB`)
+     in `mhdvsh_hall_crust_profile.f90`**, re-factorizing all `LMAX+1`
+     per-`l` diffusion matrices every single outer step instead of every
+     `N_SUB` -- a deliberate safety choice at the time (the untruncated
+     domain's Hall-CFL limit was observed collapsing >100x within a
+     single step, so the coarser `N_SUB`-step cadence `mhdvsh_hall_
+     adaptive.f90` uses would have run several steps at an already-stale
+     `dt`). Worth re-testing now that the domain is truncated at the
+     `dr(r)` knee (`RHO_TRUNCATE_CGS`, same file) -- that truncation
+     alone already relaxed the boundary Hall-CFL constraint by ~4 orders
+     of magnitude, so the coarser cadence may be safe again, recovering
+     the now-likely-unnecessary per-step re-factorization cost.
+   - **Per-step cost is not expected to stay constant over a long run,
+     and no code change fixes this on its own** -- `HALL_INDUCTION_RHS`/
+     `HALL_POYNTING_FLUX_RATE` (`src/core/hall_induction.f90`,
+     `field_diagnostics.f90`) restrict their `O(N_active**2)`-ish
+     mode-coupling sum to an "active mode list" (nonzero-boundary-value
+     modes only) -- cheap while the seed IC is a single mode, but Hall
+     coupling is expected to spread energy into more `(l,m)` pairs as
+     a real run evolves over hundreds/thousands of years, growing that
+     active set over time. Any wall-clock/step-rate estimate taken from
+     a short early-time smoke test (as this session's own AWS-cost
+     estimate was) should be treated as an optimistic lower bound for a
+     genuinely long run, not a flat rate -- not yet measured directly
+     (would need a real long run, or a synthetic broad-spectrum IC, to
+     characterize).
 
 ## Infrastructure
 

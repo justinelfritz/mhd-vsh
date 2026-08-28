@@ -126,12 +126,14 @@ MODULE CRUST_CONDUCTIVITY
 !>   reflects an actual physical phase transition (neutron drip), not a
 !>   modeling-artifact splice, and is NOT addressed by this port
 !>   (`OYAFORM` itself is unchanged).
-USE KINDS,      ONLY: dp, i4
-USE TOV_SOLVER, ONLY: TOV_PROFILE_T
-USE UNITS,      ONLY: B_UNIT_GAUSS, LENGTH_UNIT_CM, TIME_UNIT_S
+USE KINDS,          ONLY: dp, i4
+USE TOV_SOLVER,     ONLY: TOV_PROFILE_T
+USE UNITS,          ONLY: B_UNIT_GAUSS, LENGTH_UNIT_CM, TIME_UNIT_S
+USE ODE_INTEGRATOR, ONLY: LOCATE_TABLE
 IMPLICIT NONE
 PRIVATE
-PUBLIC :: OYAFORM, CONDUCT_TRANSPORT, CON_CRUST, ETA_AND_F_HALL_AT
+PUBLIC :: OYAFORM, CONDUCT_TRANSPORT, CON_CRUST, ETA_AND_F_HALL_AT, ETA_AND_F_HALL_ON_GRID, &
+  FIND_TRUNCATION_RADIUS
 
 CONTAINS
 
@@ -1164,14 +1166,9 @@ SUBROUTINE ETA_AND_F_HALL_AT(PROFILE, ETA_PROFILE, F_HALL_PROFILE, N_E_PROFILE, 
   REAL(KIND=dp), ALLOCATABLE, INTENT(OUT) :: ETA_PROFILE(:), F_HALL_PROFILE(:), N_E_PROFILE(:)
   REAL(KIND=dp), OPTIONAL, INTENT(IN) :: T_KELVIN
 
-  REAL(KIND=dp), PARAMETER :: PI = 3.14159265_dp
-  REAL(KIND=dp), PARAMETER :: C_LIGHT_CGS = 2.99792458E10_dp   ! cm/s
-  REAL(KIND=dp), PARAMETER :: E_CHARGE_ESU = 4.80320425E-10_dp ! esu
   REAL(KIND=dp), PARAMETER :: RHOL_CGS = 2.2E14_dp             ! core-crust boundary
 
   REAL(KIND=dp) :: T
-  REAL(KIND=dp) :: SIGMA, LAMBDA_TH, N_E_CGS
-  REAL(KIND=dp) :: ETA_CGS, F_HALL_CGS
   INTEGER(KIND=i4) :: I
 
   T = 1.0E9_dp; IF (PRESENT(T_KELVIN)) T = T_KELVIN
@@ -1183,17 +1180,205 @@ SUBROUTINE ETA_AND_F_HALL_AT(PROFILE, ETA_PROFILE, F_HALL_PROFILE, N_E_PROFILE, 
       WRITE(*,'(A)') 'ETA_AND_F_HALL_AT: core-density row (rho > 2.2e14 g/cm**3) not supported'
       STOP 1
     END IF
-
-    CALL CON_CRUST(T, PROFILE%RHOCGS(I), SIGMA, LAMBDA_TH, N_E_CGS)
-    ASSOCIATE (UNUSED_LAMBDA => LAMBDA_TH); END ASSOCIATE
-
-    ETA_CGS    = C_LIGHT_CGS**2 / (4.0_dp*PI*SIGMA)                        ! cm**2/s
-    F_HALL_CGS = C_LIGHT_CGS / (4.0_dp*PI*E_CHARGE_ESU*N_E_CGS)            ! cm**2/(G*s)
-
-    ETA_PROFILE(I)    = ETA_CGS * TIME_UNIT_S / LENGTH_UNIT_CM**2
-    F_HALL_PROFILE(I) = F_HALL_CGS * B_UNIT_GAUSS * TIME_UNIT_S / LENGTH_UNIT_CM**2
-    N_E_PROFILE(I)    = N_E_CGS
+    CALL ETA_F_HALL_FROM_RHO(T, PROFILE%RHOCGS(I), ETA_PROFILE(I), F_HALL_PROFILE(I), N_E_PROFILE(I))
   END DO
 END SUBROUTINE ETA_AND_F_HALL_AT
+
+!> Same physics as ETA_AND_F_HALL_AT, evaluated at arbitrary radii
+!> GRID_R(:) (e.g. a simulation's own RADIAL_GRID_T%R -- typically far
+!> fewer, differently-spaced points than PROFILE%R's own dense,
+!> log(P)-uniform TOV resampling) rather than at PROFILE's own rows.
+!> Density at each GRID_R(i) comes from log-linear interpolation
+!> (log(rho) vs r -- the crust EOS varies smoothly/near-power-law in
+!> this sense) between PROFILE's own bracketing rows, located via the
+!> existing, already-tested ODE_INTEGRATOR::LOCATE_TABLE bisection
+!> search -- same interpolation convention EOS_TABLE already
+!> established elsewhere in this project, not a new scheme. Added
+!> 2026-08-24 to wire a real (not uniform-toy-constant) eta(r)/f_H(r)
+!> into HALL_INIT's existing optional ETA_PROFILE/F_HALL_PROFILE
+!> arguments for a simulation grid, per user request.
+!>
+!> @param PROFILE Solved TOV radial profile.
+!> @param GRID_R Radii to evaluate at, km (e.g. RADIAL_GRID_T%R) -- must
+!>   lie within [PROFILE%R(1), PROFILE%R(PROFILE%N)]; a GRID_R outside
+!>   that range is a fatal STOP (not silently clamped/extrapolated) --
+!>   it means the caller's own grid doesn't actually match PROFILE's
+!>   crust extent, a bug worth surfacing loudly rather than silently
+!>   producing a nonsense density there.
+!> Returns: ETA_OUT/F_HALL_OUT/N_E_OUT, size SIZE(GRID_R) (allocated
+!>   here), same units as ETA_AND_F_HALL_AT.
+SUBROUTINE ETA_AND_F_HALL_ON_GRID(PROFILE, GRID_R, ETA_OUT, F_HALL_OUT, N_E_OUT, T_KELVIN)
+  TYPE(TOV_PROFILE_T), INTENT(IN)  :: PROFILE
+  REAL(KIND=dp),               INTENT(IN)  :: GRID_R(:)
+  REAL(KIND=dp), ALLOCATABLE, INTENT(OUT) :: ETA_OUT(:), F_HALL_OUT(:), N_E_OUT(:)
+  REAL(KIND=dp), OPTIONAL, INTENT(IN) :: T_KELVIN
+
+  REAL(KIND=dp), PARAMETER :: RHOL_CGS = 2.2E14_dp             ! core-crust boundary
+
+  REAL(KIND=dp) :: T, RHOCGS_I, FRAC
+  INTEGER(KIND=i4) :: I, J, NG
+
+  T = 1.0E9_dp; IF (PRESENT(T_KELVIN)) T = T_KELVIN
+  NG = SIZE(GRID_R)
+  ALLOCATE(ETA_OUT(NG), F_HALL_OUT(NG), N_E_OUT(NG))
+
+  DO I = 1, NG
+    IF (GRID_R(I) < PROFILE%R(1) .OR. GRID_R(I) > PROFILE%R(PROFILE%N)) THEN
+      WRITE(*,'(A,ES14.6,A,ES14.6,A,ES14.6,A)') &
+        'ETA_AND_F_HALL_ON_GRID: GRID_R outside PROFILE range: r=', GRID_R(I), &
+        ' not in [', PROFILE%R(1), ', ', PROFILE%R(PROFILE%N), ']'
+      STOP 1
+    END IF
+
+    CALL LOCATE_TABLE(PROFILE%R, GRID_R(I), J)
+    IF (J < 1_i4) J = 1_i4
+    IF (J >= PROFILE%N) J = PROFILE%N - 1_i4
+    FRAC = (GRID_R(I) - PROFILE%R(J)) / (PROFILE%R(J+1) - PROFILE%R(J))
+    RHOCGS_I = EXP(LOG(PROFILE%RHOCGS(J)) + FRAC*(LOG(PROFILE%RHOCGS(J+1)) - LOG(PROFILE%RHOCGS(J))))
+
+    IF (RHOCGS_I > RHOL_CGS) THEN
+      WRITE(*,'(A)') 'ETA_AND_F_HALL_ON_GRID: core-density row (rho > 2.2e14 g/cm**3) not supported'
+      STOP 1
+    END IF
+
+    CALL ETA_F_HALL_FROM_RHO(T, RHOCGS_I, ETA_OUT(I), F_HALL_OUT(I), N_E_OUT(I))
+  END DO
+END SUBROUTINE ETA_AND_F_HALL_ON_GRID
+
+!> Finds the largest radius (closest to the true surface) at which the
+!> electron degeneracy parameter `theta=kT/E_F` is still <= THETA_MAX --
+!> i.e., the outermost radius where the crust plasma is still reasonably
+!> described as a degenerate Fermi gas. Intended for choosing a
+!> numerically tractable outer SIMULATION boundary (see ROADMAP.md,
+!> "Analytical tasks", "Outer-boundary EOS/radial-grid truncation",
+!> 2026-08-24) WITHOUT modifying TOV_SOLVER or the EOS solve itself --
+!> PROFILE is read-only here, never mutated. The full, untruncated
+!> physical star (its real M/R, and the full profile for diagnostics)
+!> stays exactly as SOLVE_TOV_STAR computed it; this is purely a
+!> per-run, per-temperature simulation-domain choice layered on top,
+!> matching this project's existing physics-model/simulation-setup
+!> separation (TOV_SOLVER/EOS_TABLE stay physics-blind reusable
+!> utilities, same convention as LINEAR_SOLVE).
+!>
+!> Replaces an earlier, less principled approach (a single hardcoded
+!> density constant found by eyeballing a `dr(r)` plot at one specific
+!> T_KELVIN, see git history for `app/mhdvsh_hall_crust_profile.f90`'s
+!> own prior `RHO_TRUNCATE_CGS`) -- `theta`, not density, is the
+!> physically meaningful quantity that was actually varying across
+!> temperature in that earlier finding, so this computes the crossing
+!> radius directly from `theta` for whatever T_KELVIN a given run
+!> actually uses, rather than assuming a fixed density generalizes.
+!>
+!> Walks PROFILE's own rows from the surface (highest `theta`) inward,
+!> restricted to `RHOCGS<=RHOL_CGS` (OYAFORM's own fits aren't valid at
+!> core densities, and `theta` is already far below any reasonable
+!> THETA_MAX throughout the whole core anyway, so the crossing is always
+!> found well within the crust in practice), then linearly interpolates
+!> between the first sub-threshold row and its outer neighbor for a
+!> continuous crossing radius rather than snapping to the nearest
+!> tabulated row.
+!>
+!> @param PROFILE Solved TOV radial profile (TOV_SOLVER::SOLVE_TOV_STAR),
+!>   unmodified.
+!> @param T_KELVIN Assumed crust temperature, K -- theta depends on this
+!>   (same isothermal-crust convention as ETA_AND_F_HALL_AT/_ON_GRID).
+!> @param THETA_MAX Degeneracy threshold; default 1.3, matching the
+!>   empirically-found dr(r) "knee" at T_KELVIN=1e9 K (see
+!>   results/eos_comparison/dr_vs_r_outercrust.png) -- a pragmatic
+!>   choice matching that finding, not re-derived from first principles.
+!> Returns: R_TRUNC, km. PROFILE%R at the true surface if theta is
+!>   already <= THETA_MAX there (no truncation needed/beneficial); the
+!>   innermost crust row (core-crust boundary) in the pathological case
+!>   where theta never drops to THETA_MAX anywhere in the crust (e.g. an
+!>   unreasonably high T_KELVIN) -- a well-defined, safe fallback rather
+!>   than an undefined result, though it defeats the purpose of calling
+!>   this at all.
+SUBROUTINE FIND_TRUNCATION_RADIUS(PROFILE, T_KELVIN, R_TRUNC, THETA_MAX)
+  TYPE(TOV_PROFILE_T), INTENT(IN)  :: PROFILE
+  REAL(KIND=dp),        INTENT(IN)  :: T_KELVIN
+  REAL(KIND=dp),        INTENT(OUT) :: R_TRUNC
+  REAL(KIND=dp), OPTIONAL, INTENT(IN) :: THETA_MAX
+
+  REAL(KIND=dp), PARAMETER :: HBAR_CGS = 1.054571817E-27_dp
+  REAL(KIND=dp), PARAMETER :: ME_CGS = 9.1093837015E-28_dp
+  REAL(KIND=dp), PARAMETER :: C_LIGHT_CGS = 2.99792458E10_dp
+  REAL(KIND=dp), PARAMETER :: KB_CGS = 1.380649E-16_dp
+  REAL(KIND=dp), PARAMETER :: PI = 3.14159265_dp
+  REAL(KIND=dp), PARAMETER :: DEFAULT_THETA_MAX = 1.3_dp
+  REAL(KIND=dp), PARAMETER :: RHOL_CGS = 2.2E14_dp   ! core-crust boundary, matches ETA_AND_F_HALL_AT
+
+  REAL(KIND=dp) :: THRESHOLD, THETA_HERE, THETA_OUTER
+  INTEGER(KIND=i4) :: I, I_CRUST_START
+
+  THRESHOLD = DEFAULT_THETA_MAX
+  IF (PRESENT(THETA_MAX)) THRESHOLD = THETA_MAX
+
+  I_CRUST_START = 1_i4
+  DO I = 1, PROFILE%N
+    IF (PROFILE%RHOCGS(I) <= RHOL_CGS) THEN
+      I_CRUST_START = I
+      EXIT
+    END IF
+  END DO
+
+  IF (THETA_OF_ROW(PROFILE%N) <= THRESHOLD) THEN
+    R_TRUNC = PROFILE%R(PROFILE%N)
+    RETURN
+  END IF
+
+  DO I = PROFILE%N-1, I_CRUST_START, -1
+    THETA_HERE = THETA_OF_ROW(I)
+    IF (THETA_HERE <= THRESHOLD) THEN
+      THETA_OUTER = THETA_OF_ROW(I+1)
+      R_TRUNC = PROFILE%R(I) + (THRESHOLD-THETA_HERE)/(THETA_OUTER-THETA_HERE) * &
+        (PROFILE%R(I+1)-PROFILE%R(I))
+      RETURN
+    END IF
+  END DO
+
+  R_TRUNC = PROFILE%R(I_CRUST_START)
+
+CONTAINS
+
+  FUNCTION THETA_OF_ROW(IDX) RESULT(TH)
+    INTEGER(KIND=i4), INTENT(IN) :: IDX
+    REAL(KIND=dp) :: TH, SIGMA_L, LAMBDA_L, N_E_L, PF_L, EF_L
+    CALL CON_CRUST(T_KELVIN, PROFILE%RHOCGS(IDX), SIGMA_L, LAMBDA_L, N_E_L)
+    ASSOCIATE (UNUSED_SIGMA => SIGMA_L, UNUSED_LAMBDA => LAMBDA_L); END ASSOCIATE
+    PF_L = HBAR_CGS*(3.0_dp*PI**2*N_E_L)**(1.0_dp/3.0_dp)
+    EF_L = SQRT((PF_L*C_LIGHT_CGS)**2 + (ME_CGS*C_LIGHT_CGS**2)**2) - ME_CGS*C_LIGHT_CGS**2
+    TH = KB_CGS*T_KELVIN/EF_L
+  END FUNCTION THETA_OF_ROW
+
+END SUBROUTINE FIND_TRUNCATION_RADIUS
+
+!> Shared per-density conversion: CON_CRUST's SIGMA/N_E outputs into
+!> eta/f_H code-unit values -- extracted from what used to be
+!> ETA_AND_F_HALL_AT's own inline loop body, so ETA_AND_F_HALL_ON_GRID
+!> doesn't duplicate the physics. `eta = c**2/(4*pi*sigma)` (standard
+!> magnetic diffusivity from conductivity), `f_H = c/(4*pi*e*n_e)`
+!> (hall_induction.f90's own docstring), both converted from Gaussian-
+!> cgs into this project's code units via UNITS.
+SUBROUTINE ETA_F_HALL_FROM_RHO(T, RHOCGS, ETA_OUT, F_HALL_OUT, N_E_OUT)
+  REAL(KIND=dp), INTENT(IN)  :: T, RHOCGS
+  REAL(KIND=dp), INTENT(OUT) :: ETA_OUT, F_HALL_OUT, N_E_OUT
+
+  REAL(KIND=dp), PARAMETER :: PI = 3.14159265_dp
+  REAL(KIND=dp), PARAMETER :: C_LIGHT_CGS = 2.99792458E10_dp   ! cm/s
+  REAL(KIND=dp), PARAMETER :: E_CHARGE_ESU = 4.80320425E-10_dp ! esu
+
+  REAL(KIND=dp) :: SIGMA, LAMBDA_TH, N_E_CGS
+  REAL(KIND=dp) :: ETA_CGS, F_HALL_CGS
+
+  CALL CON_CRUST(T, RHOCGS, SIGMA, LAMBDA_TH, N_E_CGS)
+  ASSOCIATE (UNUSED_LAMBDA => LAMBDA_TH); END ASSOCIATE
+
+  ETA_CGS    = C_LIGHT_CGS**2 / (4.0_dp*PI*SIGMA)                        ! cm**2/s
+  F_HALL_CGS = C_LIGHT_CGS / (4.0_dp*PI*E_CHARGE_ESU*N_E_CGS)            ! cm**2/(G*s)
+
+  ETA_OUT    = ETA_CGS * TIME_UNIT_S / LENGTH_UNIT_CM**2
+  F_HALL_OUT = F_HALL_CGS * B_UNIT_GAUSS * TIME_UNIT_S / LENGTH_UNIT_CM**2
+  N_E_OUT    = N_E_CGS
+END SUBROUTINE ETA_F_HALL_FROM_RHO
 
 END MODULE CRUST_CONDUCTIVITY

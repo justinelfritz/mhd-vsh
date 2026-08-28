@@ -250,15 +250,27 @@ END FUNCTION TOTAL_MAGNETIC_ENERGY
 !>   ever heats. Does NOT extend to a magnetofrictional Ohm's law this
 !>   way -- that term is dissipative by design, a genuinely different
 !>   mechanism, not covered by this argument.
+!> @param ETA_PROFILE Optional per-radial-row override (size RGRID%N,
+!>   e.g. from CRUST_CONDUCTIVITY::ETA_AND_F_HALL_AT/_ON_GRID), applied
+!>   elementwise inside the volume integral rather than as a uniform
+!>   scalar prefactor -- same convention as DIFFUSION_INIT/
+!>   HALL_INDUCTION_RHS's own ETA_PROFILE/F_HALL_PROFILE arguments.
+!>   Absent, behavior is the original scalar-ETA code path, unchanged.
 !> Returns: volume-integrated Joule dissipation rate, <=0 (a loss).
-FUNCTION JOULE_DISSIPATION_RATE(PHI, PSI, OPS, RGRID, ETA) RESULT(E_DOT_J)
+FUNCTION JOULE_DISSIPATION_RATE(PHI, PSI, OPS, RGRID, ETA, ETA_PROFILE) RESULT(E_DOT_J)
   TYPE(SPECTRAL_SCALAR_T), INTENT(IN) :: PHI, PSI
   TYPE(RADIAL_OPERATOR_T), INTENT(IN) :: OPS
   TYPE(RADIAL_GRID_T),     INTENT(IN) :: RGRID
   REAL(KIND=dp),           INTENT(IN) :: ETA
+  REAL(KIND=dp), OPTIONAL, INTENT(IN) :: ETA_PROFILE(:)
   REAL(KIND=dp) :: E_DOT_J
-  E_DOT_J = -(ETA/(4.0_dp*pi)) * &
-    RADIAL_INTEGRAL(CURRENT_DENSITY_SQUARED_BY_R(PHI, PSI, OPS, RGRID), RGRID)
+  IF (PRESENT(ETA_PROFILE)) THEN
+    E_DOT_J = -(1.0_dp/(4.0_dp*pi)) * &
+      RADIAL_INTEGRAL(ETA_PROFILE*CURRENT_DENSITY_SQUARED_BY_R(PHI, PSI, OPS, RGRID), RGRID)
+  ELSE
+    E_DOT_J = -(ETA/(4.0_dp*pi)) * &
+      RADIAL_INTEGRAL(CURRENT_DENSITY_SQUARED_BY_R(PHI, PSI, OPS, RGRID), RGRID)
+  END IF
 END FUNCTION JOULE_DISSIPATION_RATE
 
 !> Angle-integrated (over the full 4pi sphere) `|curl(B)|**2 = |j|**2` at
@@ -370,22 +382,37 @@ END FUNCTION HALL_COURANT_TIMESTEP
 !>   the diffusion-limit derivation this is built from does not carry
 !>   over. Do not reuse this formula for a Hall/magnetofrictional Ohm's
 !>   law even provisionally; wait for that derivation.
+!> @param ETA_PROFILE Optional per-radial-row override (size RGRID%N).
+!>   Since this is a boundary-only evaluation (not a volume integral),
+!>   "applying the profile" means using ETA_PROFILE(RGRID%N) at the
+!>   outer boundary term and ETA_PROFILE(1) at the inner boundary term
+!>   SEPARATELY, rather than one shared scalar -- the two boundaries
+!>   generally sit at very different densities/eta in a real crust
+!>   profile. Absent, behavior is the original scalar-ETA code path,
+!>   unchanged (same accumulator, same summation order -- not just
+!>   numerically close).
 !> Returns: net Poynting flux rate through the domain's two boundaries
 !>   (outer minus inner) -- a pure boundary evaluation, no radial
 !>   integral. Assumes Phi/Psi represent a real field (see module
 !>   header): the real part of the boundary sum is returned.
-FUNCTION POYNTING_FLUX_RATE(PHI, PSI, OPS, RGRID, ETA) RESULT(E_DOT_S)
+FUNCTION POYNTING_FLUX_RATE(PHI, PSI, OPS, RGRID, ETA, ETA_PROFILE) RESULT(E_DOT_S)
   TYPE(SPECTRAL_SCALAR_T), INTENT(IN) :: PHI, PSI
   TYPE(RADIAL_OPERATOR_T), INTENT(IN) :: OPS
   TYPE(RADIAL_GRID_T),     INTENT(IN) :: RGRID
   REAL(KIND=dp),           INTENT(IN) :: ETA
+  REAL(KIND=dp), OPTIONAL, INTENT(IN) :: ETA_PROFILE(:)
   REAL(KIND=dp) :: E_DOT_S
-  COMPLEX(KIND=dp) :: FLUX_TOTAL, DPHI_DR_BND, DPSI_DR_BND, CURV_PHI_BND
+  COMPLEX(KIND=dp) :: FLUX_TOTAL, FLUX_OUTER, FLUX_INNER, TERM_OUTER, TERM_INNER
+  COMPLEX(KIND=dp) :: DPHI_DR_BND, DPSI_DR_BND, CURV_PHI_BND
   REAL(KIND=dp)    :: LAMBDA_L, D2_CURV(RGRID%N,RGRID%N)
   INTEGER(KIND=i4) :: L, M, IDX, N
+  LOGICAL :: HAS_PROFILE
 
   N = RGRID%N
+  HAS_PROFILE = PRESENT(ETA_PROFILE)
   FLUX_TOTAL = (0.0_dp, 0.0_dp)
+  FLUX_OUTER = (0.0_dp, 0.0_dp)
+  FLUX_INNER = (0.0_dp, 0.0_dp)
   DO L = 0, PHI%LMAX
     LAMBDA_L = REAL(L*(L+1), KIND=dp)
     D2_CURV = OPS%D2
@@ -396,18 +423,33 @@ FUNCTION POYNTING_FLUX_RATE(PHI, PSI, OPS, RGRID, ETA) RESULT(E_DOT_S)
       DPSI_DR_BND  = SUM(OPS%D1(N,:)*PSI%COEF(:,IDX))
       DPHI_DR_BND  = SUM(OPS%D1(N,:)*PHI%COEF(:,IDX))
       CURV_PHI_BND = SUM(D2_CURV(N,:)*PHI%COEF(:,IDX))
-      FLUX_TOTAL = FLUX_TOTAL + LAMBDA_L * ( &
+      TERM_OUTER = LAMBDA_L * ( &
         DPSI_DR_BND*CONJG(PSI%COEF(N,IDX)) - CONJG(DPHI_DR_BND)*CURV_PHI_BND )
+      IF (HAS_PROFILE) THEN
+        FLUX_OUTER = FLUX_OUTER + TERM_OUTER
+      ELSE
+        FLUX_TOTAL = FLUX_TOTAL + TERM_OUTER
+      END IF
 
       DPSI_DR_BND  = SUM(OPS%D1(1,:)*PSI%COEF(:,IDX))
       DPHI_DR_BND  = SUM(OPS%D1(1,:)*PHI%COEF(:,IDX))
       CURV_PHI_BND = SUM(D2_CURV(1,:)*PHI%COEF(:,IDX))
-      FLUX_TOTAL = FLUX_TOTAL - LAMBDA_L * ( &
+      TERM_INNER = LAMBDA_L * ( &
         DPSI_DR_BND*CONJG(PSI%COEF(1,IDX)) - CONJG(DPHI_DR_BND)*CURV_PHI_BND )
+      IF (HAS_PROFILE) THEN
+        FLUX_INNER = FLUX_INNER + TERM_INNER
+      ELSE
+        FLUX_TOTAL = FLUX_TOTAL - TERM_INNER
+      END IF
     END DO
   END DO
 
-  E_DOT_S = -(ETA/(4.0_dp*pi)) * REAL(FLUX_TOTAL, KIND=dp)
+  IF (HAS_PROFILE) THEN
+    E_DOT_S = -(1.0_dp/(4.0_dp*pi)) * &
+      REAL(ETA_PROFILE(N)*FLUX_OUTER - ETA_PROFILE(1)*FLUX_INNER, KIND=dp)
+  ELSE
+    E_DOT_S = -(ETA/(4.0_dp*pi)) * REAL(FLUX_TOTAL, KIND=dp)
+  END IF
 END FUNCTION POYNTING_FLUX_RATE
 
 !> @param PHI, PSI, OPS, RGRID as JOULE_DISSIPATION_RATE.
@@ -441,23 +483,34 @@ END FUNCTION POYNTING_FLUX_RATE
 !>   called every logged timestep. Assumes Phi/Psi represent a real
 !>   field, same as POYNTING_FLUX_RATE: the real part of the boundary
 !>   sum is returned.
-FUNCTION HALL_POYNTING_FLUX_RATE(PHI, PSI, OPS, RGRID, F_HALL) RESULT(E_DOT_S)
+!> @param F_HALL_PROFILE Optional per-radial-row override (size RGRID%N)
+!>   -- like POYNTING_FLUX_RATE's ETA_PROFILE, applied as
+!>   F_HALL_PROFILE(RGRID%N) at the outer boundary and F_HALL_PROFILE(1)
+!>   at the inner, separately. Absent, behavior is the original
+!>   scalar-F_HALL code path, unchanged (same accumulator/summation
+!>   order).
+FUNCTION HALL_POYNTING_FLUX_RATE(PHI, PSI, OPS, RGRID, F_HALL, F_HALL_PROFILE) RESULT(E_DOT_S)
   TYPE(SPECTRAL_SCALAR_T), INTENT(IN) :: PHI, PSI
   TYPE(RADIAL_OPERATOR_T), INTENT(IN) :: OPS
   TYPE(RADIAL_GRID_T),     INTENT(IN) :: RGRID
   REAL(KIND=dp),           INTENT(IN) :: F_HALL
+  REAL(KIND=dp), OPTIONAL, INTENT(IN) :: F_HALL_PROFILE(:)
   REAL(KIND=dp) :: E_DOT_S
 
   COMPLEX(KIND=dp), ALLOCATABLE :: PHI_BND(:,:), PSI_BND(:,:)
   COMPLEX(KIND=dp), ALLOCATABLE :: DPHI_BND(:,:), DPSI_BND(:,:), CURV_PHI_BND(:,:)
   REAL(KIND=dp)    :: D2_CURV(RGRID%N,RGRID%N)
-  COMPLEX(KIND=dp) :: FLUX_TOTAL, COUPLING, TERM1, TERM2
+  COMPLEX(KIND=dp) :: FLUX_TOTAL, FLUX_ARR(2), COUPLING, TERM1, TERM2
   REAL(KIND=dp)    :: LAMBDA_K, LAMBDA_K2, LAMBDA_N, SGN(2)
   INTEGER(KIND=i4) :: BND_ROW(2), NLM
   INTEGER(KIND=i4) :: K, L, K2, L2, N, M, IDX_KL, IDX_K2L2, IDX_NM, IB
   INTEGER(KIND=i4), ALLOCATABLE :: ACTIVE_K(:), ACTIVE_L(:), ACTIVE_IDX(:)
   INTEGER(KIND=i4) :: N_ACTIVE, IA, IA2, KK, LL, IDX, N_LO, N_HI
   REAL(KIND=dp), PARAMETER :: ACTIVE_TOL = 1.0E-13_dp
+  LOGICAL :: HAS_PROFILE
+
+  HAS_PROFILE = PRESENT(F_HALL_PROFILE)
+  FLUX_ARR = (0.0_dp, 0.0_dp)
 
   NLM = PHI%NLM
   BND_ROW = (/1, RGRID%N/)
@@ -537,13 +590,22 @@ FUNCTION HALL_POYNTING_FLUX_RATE(PHI, PSI, OPS, RGRID, F_HALL) RESULT(E_DOT_S)
           TERM2 = LAMBDA_K2*(LAMBDA_K+LAMBDA_N-LAMBDA_K2) * PHI_BND(IB,IDX_K2L2) * &
             ( DPSI_BND(IB,IDX_KL)*CONJG(DPHI_BND(IB,IDX_NM)) - &
               PSI_BND(IB,IDX_NM)*CURV_PHI_BND(IB,IDX_KL) )
-          FLUX_TOTAL = FLUX_TOTAL + SGN(IB)*COUPLING*(TERM1+TERM2)
+          IF (HAS_PROFILE) THEN
+            FLUX_ARR(IB) = FLUX_ARR(IB) + COUPLING*(TERM1+TERM2)
+          ELSE
+            FLUX_TOTAL = FLUX_TOTAL + SGN(IB)*COUPLING*(TERM1+TERM2)
+          END IF
         END DO
       END DO
     END DO
   END DO
 
-  E_DOT_S = -(F_HALL/(8.0_dp*pi)) * REAL(FLUX_TOTAL, KIND=dp)
+  IF (HAS_PROFILE) THEN
+    E_DOT_S = -(1.0_dp/(8.0_dp*pi)) * REAL( &
+      SGN(1)*F_HALL_PROFILE(1)*FLUX_ARR(1) + SGN(2)*F_HALL_PROFILE(RGRID%N)*FLUX_ARR(2), KIND=dp)
+  ELSE
+    E_DOT_S = -(F_HALL/(8.0_dp*pi)) * REAL(FLUX_TOTAL, KIND=dp)
+  END IF
   DEALLOCATE(PHI_BND, PSI_BND, DPHI_BND, DPSI_BND, CURV_PHI_BND)
   DEALLOCATE(ACTIVE_K, ACTIVE_L, ACTIVE_IDX)
 END FUNCTION HALL_POYNTING_FLUX_RATE

@@ -165,6 +165,35 @@ set_target_properties(mhdvsh_hall_dt_sweep PROPERTIES
 )
 target_link_libraries(mhdvsh_hall_dt_sweep PRIVATE mhdvsh_core)
 
+# Same regime/grid/timestepper as mhdvsh_hall, but with a physically-
+# sourced (eta, f_H) pair read off the real crust profile instead of
+# mhdvsh_hall's own toy constants -- see mhdvsh_hall_crust_sample.f90's
+# own header for full input provenance. A deliberate, separate
+# comparison run (user, 2026-08-24), not a modification of mhdvsh_hall
+# itself -- same EXCLUDE_FROM_ALL treatment as the other one-off
+# comparison drivers above (not part of the default ALL/ctest surface).
+add_executable(mhdvsh_hall_crust_sample EXCLUDE_FROM_ALL
+  ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall_crust_sample.f90)
+set_target_properties(mhdvsh_hall_crust_sample PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_crust_sample"
+)
+target_link_libraries(mhdvsh_hall_crust_sample PRIVATE mhdvsh_core)
+
+# Same regime/grid as mhdvsh_hall_crust_sample, but with a full,
+# radially-varying eta(r)/f_H(r) (CRUST_CONDUCTIVITY::
+# ETA_AND_F_HALL_ON_GRID, from a live TOV solve) instead of one
+# physically-sourced constant pair -- see
+# mhdvsh_hall_crust_profile.f90's own header. dt/n_steps/n_sub are CLI
+# arguments (like mhdvsh_hall_dt_sweep) for the staged smoke-test/
+# dt-check/full-1000yr-run workflow. Same EXCLUDE_FROM_ALL treatment as
+# the other one-off comparison drivers.
+add_executable(mhdvsh_hall_crust_profile EXCLUDE_FROM_ALL
+  ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall_crust_profile.f90)
+set_target_properties(mhdvsh_hall_crust_profile PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_crust_profile"
+)
+target_link_libraries(mhdvsh_hall_crust_profile PRIVATE mhdvsh_core)
+
 # ── Artifacts (plots/data regenerated automatically with every build) ───────
 # Directory convention: artifacts/<regime>/<diagnostic>/{data,plots}/ -- one
 # data-producing driver + one scripts/plot_*.py + one add_custom_target(...
