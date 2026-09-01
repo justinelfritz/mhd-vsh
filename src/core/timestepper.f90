@@ -131,10 +131,20 @@ END SUBROUTINE RUN
 !> @param CFL_SAFETY Optional safety margin, `DT = CFL_SAFETY*COMPUTE_DT(STATE)`
 !>   (default 0.5).
 !> @param T_START Optional start time (default 0).
+!> @param T_MAX Optional target simulated time (added 2026-08-24, for a
+!>   real `tmax=1000` yr production run where the adaptive `dt`
+!>   trajectory can't be predicted well enough in advance to pick
+!>   N_STEPS precisely). When present, the loop also stops as soon as
+!>   `T` reaches `T_MAX`, clipping the final step's `DT` so `T` lands
+!>   exactly on `T_MAX` rather than overshooting it -- N_STEPS still
+!>   applies as an upper safety cap (in case `DT` turns out smaller than
+!>   expected and `T_MAX` would otherwise take far longer than intended
+!>   to reach). Absent, behavior is exactly the original N_STEPS-only
+!>   loop, unchanged code path.
 !> @param ON_STEP Optional observer matching REGIME_ON_STEP_I, called
 !>   after every step; has no effect on the evolution itself.
 SUBROUTINE RUN_ADAPTIVE(ADVANCE, STATE, COMPUTE_DT, SET_DT, N_STEPS, DT_RECOMPUTE_EVERY, &
-    CFL_SAFETY, T_START, ON_STEP)
+    CFL_SAFETY, T_START, T_MAX, ON_STEP)
   PROCEDURE(REGIME_ADVANCE_I)             :: ADVANCE
   CLASS(*),         INTENT(INOUT)         :: STATE
   PROCEDURE(REGIME_DT_I)                  :: COMPUTE_DT
@@ -143,6 +153,7 @@ SUBROUTINE RUN_ADAPTIVE(ADVANCE, STATE, COMPUTE_DT, SET_DT, N_STEPS, DT_RECOMPUT
   INTEGER(KIND=i4), INTENT(IN)            :: DT_RECOMPUTE_EVERY
   REAL(KIND=dp),    INTENT(IN), OPTIONAL  :: CFL_SAFETY
   REAL(KIND=dp),    INTENT(IN), OPTIONAL  :: T_START
+  REAL(KIND=dp),    INTENT(IN), OPTIONAL  :: T_MAX
   PROCEDURE(REGIME_ON_STEP_I), OPTIONAL   :: ON_STEP
   REAL(KIND=dp)    :: T, DT, SAFETY
   INTEGER(KIND=i4) :: ISTEP
@@ -157,9 +168,18 @@ SUBROUTINE RUN_ADAPTIVE(ADVANCE, STATE, COMPUTE_DT, SET_DT, N_STEPS, DT_RECOMPUT
       DT = SAFETY * COMPUTE_DT(STATE)
       CALL SET_DT(DT)
     END IF
+    IF (PRESENT(T_MAX)) THEN
+      IF (T+DT > T_MAX) THEN
+        DT = T_MAX - T
+        CALL SET_DT(DT)
+      END IF
+    END IF
     CALL ADVANCE(STATE, DT, T)
     T = T + DT
     IF (PRESENT(ON_STEP)) CALL ON_STEP(STATE, T, ISTEP)
+    IF (PRESENT(T_MAX)) THEN
+      IF (T >= T_MAX) EXIT
+    END IF
   END DO
 END SUBROUTINE RUN_ADAPTIVE
 

@@ -55,6 +55,14 @@
 !> choice) if omitted; argument meanings for the path arguments
 !> identical to app/mhdvsh_hall.f90's own.
 !>
+!> @warning n_steps is now an upper SAFETY CAP, not the real target
+!>   (added 2026-08-24, see TIMESTEPPER::RUN_ADAPTIVE's own T_MAX
+!>   parameter): the run stops at T_MAX_TARGET=1000 simulated years
+!>   first in the expected case, clipping the final step's dt so T
+!>   lands exactly on 1000 yr rather than overshooting. Pick n_steps
+!>   generously (comfortably more than the actual expected step count)
+!>   so the safety cap doesn't cut the run short before T_MAX_TARGET.
+!>
 !> Units: same convention as mhdvsh_hall.f90 (UNITS::ENERGY_UNIT_ERG/
 !> POWER_UNIT_ERG_PER_S applied only at this reporting layer).
 PROGRAM MHDVSH_HALL_CRUST_PROFILE
@@ -111,6 +119,13 @@ REAL(KIND=dp),    PARAMETER :: PI = 3.14159265358979_dp
 REAL(KIND=dp),    PARAMETER :: GRID_TOL = 1.0E-9_dp
 REAL(KIND=dp),    PARAMETER :: DEFAULT_CFL_SAFETY = 0.5_dp   ! matches mhdvsh_hall_adaptive.f90
 REAL(KIND=dp),    PARAMETER :: BLOWUP_FACTOR = 10.0_dp   ! same threshold as mhdvsh_hall_dt_sweep.f90
+! Target simulated time for the production run (added 2026-08-24, see
+! TIMESTEPPER::RUN_ADAPTIVE's own T_MAX parameter) -- with adaptive dt
+! the step-to-time mapping can't be predicted precisely in advance, so
+! this drives the actual stopping point; the CLI n_steps argument is now
+! an upper SAFETY CAP only (pick it generously; the run stops at
+! T_MAX_TARGET yr first in the expected case).
+REAL(KIND=dp),    PARAMETER :: T_MAX_TARGET = 1000.0_dp
 
 TYPE(TOV_PROFILE_T)     :: PROFILE
 TYPE(RADIAL_GRID_T)     :: RGRID
@@ -241,14 +256,23 @@ IF (WRITE_DATA) THEN
       'data/eos/APR_EOS_Cat.dat), NOT a uniform constant'
     WRITE(DATA_UNIT,'(A)') '#   seed IC: single mode Phi(l=1,m=0)=sin(pi*(r-R_MIN)/(R_MAX-R_MIN)), Psi=0'
     WRITE(DATA_UNIT,'(A)') '# step  t_yr  dt_yr  tc_raw_yr  E_poloidal_erg  E_toroidal_erg' // &
+      '  EDOT_poloidal_erg_per_s  EDOT_toroidal_erg_per_s' // &
       '  joule_dissipation_rate_erg_per_s  poynting_flux_rate_erg_per_s' // &
       '  hall_poynting_flux_rate_erg_per_s  energy_balance_residual_erg_per_s'
   END IF
   PREV_E_POL = TOTAL_POLOIDAL_MAGNETIC_ENERGY(STATE%PHI, OPS, RGRID)
   PREV_E_TOR = TOTAL_TOROIDAL_MAGNETIC_ENERGY(STATE%PSI, RGRID)
   IF (.NOT. RESUMING) THEN
-    WRITE(DATA_UNIT,'(I8,9ES16.8)') 0_i4, 0.0_dp, DT0, TC0, &
+    ! EDOT_poloidal/EDOT_toroidal (dE/dt of each field component -- added
+    ! 2026-08-25 per user request, the "only" quantities wanted in the
+    ! energy-budget plot alongside the rate terms, not the raw E_pol/
+    ! E_tor values themselves) are undefined at step 0 for the same
+    ! reason the residual already is: no prior sample exists yet to
+    ! backward-difference against. NaN here, not 0, for the same reason
+    ! given below for the residual.
+    WRITE(DATA_UNIT,'(I8,11ES16.8)') 0_i4, 0.0_dp, DT0, TC0, &
       PREV_E_POL*ENERGY_UNIT_ERG, PREV_E_TOR*ENERGY_UNIT_ERG, &
+      IEEE_VALUE(1.0_dp, IEEE_QUIET_NAN), IEEE_VALUE(1.0_dp, IEEE_QUIET_NAN), &
       JOULE_DISSIPATION_RATE(STATE%PHI, STATE%PSI, OPS, RGRID, ETA_MID, ETA_PROFILE=ETA_PROFILE) &
         *POWER_UNIT_ERG_PER_S, &
       POYNTING_FLUX_RATE(STATE%PHI, STATE%PSI, OPS, RGRID, ETA_MID, ETA_PROFILE=ETA_PROFILE) &
@@ -296,10 +320,10 @@ BLOWN_UP = .FALSE.
 E0 = TOTAL_MAGNETIC_ENERGY(STATE%PHI, STATE%PSI, OPS, RGRID)
 IF (NEED_ON_STEP) THEN
   CALL RUN_ADAPTIVE(HALL_ADVANCE, STATE, HALL_COMPUTE_DT, HALL_SET_DT, N_STEPS_REMAINING, &
-    DT_RECOMPUTE_EVERY=1_i4, CFL_SAFETY=CFL_SAFETY, T_START=T_START, ON_STEP=LOG_ENERGY)
+    DT_RECOMPUTE_EVERY=1_i4, CFL_SAFETY=CFL_SAFETY, T_START=T_START, T_MAX=T_MAX_TARGET, ON_STEP=LOG_ENERGY)
 ELSE
   CALL RUN_ADAPTIVE(HALL_ADVANCE, STATE, HALL_COMPUTE_DT, HALL_SET_DT, N_STEPS_REMAINING, &
-    DT_RECOMPUTE_EVERY=1_i4, CFL_SAFETY=CFL_SAFETY, T_START=T_START)
+    DT_RECOMPUTE_EVERY=1_i4, CFL_SAFETY=CFL_SAFETY, T_START=T_START, T_MAX=T_MAX_TARGET)
 END IF
 E1 = TOTAL_MAGNETIC_ENERGY(STATE%PHI, STATE%PSI, OPS, RGRID)
 
@@ -348,7 +372,7 @@ SUBROUTINE LOG_ENERGY(STATE, T, ISTEP)
   CLASS(*),         INTENT(IN) :: STATE
   REAL(KIND=dp),    INTENT(IN) :: T
   INTEGER(KIND=i4), INTENT(IN) :: ISTEP
-  REAL(KIND=dp) :: E_POL, E_TOR, EDOT_J, EDOT_S, EDOT_S_HALL, RESIDUAL, E_NOW
+  REAL(KIND=dp) :: E_POL, E_TOR, EDOT_POL, EDOT_TOR, EDOT_J, EDOT_S, EDOT_S_HALL, RESIDUAL, E_NOW
   REAL(KIND=dp) :: TC_NOW, DT_NOW
   INTEGER(KIND=i4) :: GLOBAL_ISTEP
   GLOBAL_ISTEP = ISTEP_START + ISTEP
@@ -364,14 +388,17 @@ SUBROUTINE LOG_ENERGY(STATE, T, ISTEP)
       TC_NOW = HALL_COMPUTE_DT(STATE)
       DT_NOW = CFL_SAFETY * TC_NOW
 
+      EDOT_POL    = (E_POL-PREV_E_POL)/DT_NOW
+      EDOT_TOR    = (E_TOR-PREV_E_TOR)/DT_NOW
       EDOT_J      = JOULE_DISSIPATION_RATE(STATE%PHI, STATE%PSI, OPS, RGRID, ETA_MID, ETA_PROFILE=ETA_PROFILE)
       EDOT_S      = POYNTING_FLUX_RATE(STATE%PHI, STATE%PSI, OPS, RGRID, ETA_MID, ETA_PROFILE=ETA_PROFILE)
       EDOT_S_HALL = HALL_POYNTING_FLUX_RATE(STATE%PHI, STATE%PSI, OPS, RGRID, F_HALL_MID, &
         F_HALL_PROFILE=F_HALL_PROFILE)
-      RESIDUAL = ((E_POL-PREV_E_POL) + (E_TOR-PREV_E_TOR))/DT_NOW - (EDOT_J+EDOT_S+EDOT_S_HALL)
+      RESIDUAL = (EDOT_POL+EDOT_TOR) - (EDOT_J+EDOT_S+EDOT_S_HALL)
 
-      WRITE(DATA_UNIT,'(I8,9ES16.8)') GLOBAL_ISTEP, T, DT_NOW, TC_NOW, &
+      WRITE(DATA_UNIT,'(I8,11ES16.8)') GLOBAL_ISTEP, T, DT_NOW, TC_NOW, &
         E_POL*ENERGY_UNIT_ERG, E_TOR*ENERGY_UNIT_ERG, &
+        EDOT_POL*POWER_UNIT_ERG_PER_S, EDOT_TOR*POWER_UNIT_ERG_PER_S, &
         EDOT_J*POWER_UNIT_ERG_PER_S, EDOT_S*POWER_UNIT_ERG_PER_S, &
         EDOT_S_HALL*POWER_UNIT_ERG_PER_S, RESIDUAL*POWER_UNIT_ERG_PER_S
 

@@ -26,6 +26,41 @@ driver, which itself now supports checkpoint/restart
 docs, `ford project.md` → `docs/index.html`) for the module-by-module
 reference.
 
+## Recently resolved (2026-08-29)
+
+- **Hall-regime energy-balance residual, root cause found and largely
+  fixed: `HALL_SUBSTEPS` (`src/regimes/hall/hall_regime.f90`) was
+  hard-zeroing the boundary rows of `Phi`/`Psi` as its "numerical
+  hygiene" placeholder during every explicit Hall RK4 substep. That
+  looked harmless in every earlier check (this project's seed IC starts
+  at exactly zero at both boundaries), but the outer boundary carries a
+  **Robin** BC, not Dirichlet, so it legitimately grows a nonzero,
+  physically real value over time. By 1000yr into
+  `results/hall_crust_profile_1000yr/`'s own production run, the
+  dominant mode's outer-boundary `|Phi|` had reached 60% of the field's
+  global max, sitting exactly where `F_HALL` is ~1e7x larger than at the
+  inner boundary. Confirmed empirically (a standalone `dt_hall`-
+  convergence harness isolating pure Hall substepping, no diffusion,
+  from a real mid-run checkpoint): hard-zeroing that value grew total
+  magnetic energy 11.7x within a single outer step, a result stable
+  across a 128x `dt_hall` sweep (i.e. a real effect, not a
+  discretization artifact) -- silently absorbed back down every step by
+  the trailing `DIFFUSION_ADVANCE` call, which is what was actually
+  keeping the scheme from visibly blowing up. Fixed: `ZERO_BOUNDARY` ->
+  `HOLD_BOUNDARY`, pinning the boundary at its pre-substep
+  (last-diffusion-enforced) value instead of snapping it to zero. A
+  fresh 1000yr rerun confirms the fix: `Hall Poynting flux`/residual both
+  dropped by >10x in absolute magnitude and `Hall Poynting flux` no
+  longer grows unboundedly, it plateaus by ~t=300yr. Full investigation
+  (LMAX=30 vs 45 truncation test -- ruled out, bit-identical; the
+  convergence-check harness; the fix; before/after production reruns) --
+  ask to see the session transcript for the complete methodology.
+- **Not fully resolved -- see Programming task 10 below**: even after
+  the fix, the energy-budget plot still shows a real, visible energy-
+  balance violation concentrated in the simulation's first ~10 years.
+  Flagged high-priority by the user (2026-08-29); root cause not yet
+  identified.
+
 ## Recently resolved (2026-08-23, latest)
 
 **Non-monotonic `eta(r)`, root cause and fix: replaced NSCool's spliced
@@ -852,6 +887,32 @@ directly relevant starting points, not blank-slate work:
    (`CRUST_CONDUCTIVITY::ETA_AND_F_HALL_AT`) -- not yet threaded into
    `mhdvsh_hall_adaptive.f90` itself, which still uses a uniform scalar
    `F_HALL`, not `ETA_AND_F_HALL_AT`'s per-radius profile.
+5. **Derive a series of reference initial conditions for the magnetic
+   field, addressing programming task 10's root cause (2026-08-29).**
+   Root cause confirmed directly against `boundary_conditions.f90`'s
+   own Robin condition (`dPhi/dr|_Rout = -(l/R_out)*Phi(R_out)`): this
+   project's standard single-seed-mode IC (`Phi_{l=1,m=0}(r) =
+   sin(pi*(r-R_min)/(R_max-R_min))`, `Psi=0`) gives `Phi(R_max)=0` (so
+   the Robin condition demands `dPhi/dr=0` there too) but its actual
+   derivative is `-pi/(R_max-R_min)` -- for the crust-profile production
+   run's real geometry, `-2.495 km**-1` against a required `0`, ~30x
+   the Robin coefficient's own scale (`l/R_max=0.0865 km**-1`). Not a
+   small mismatch. `DIFFUSION_REGIME::SOLVE_FIELD` unconditionally
+   overwrites the boundary row with the Robin-consistent solution every
+   step, so the very first outer step snaps the field from this
+   BC-violating configuration into a BC-consistent one -- confirmed to
+   be exactly the huge single-step outlier at t=1.74yr found early in
+   this investigation, and the sharp early dip/spike visible in both
+   the per-l energy plots and `Edot_tot`.
+   User (2026-08-29): will derive a SERIES of different initial
+   conditions (not just one replacement) to use and reference going
+   forward -- e.g. spanning a range from "cheap, BC-consistent but not
+   a true physical eigenmode" up to the full force-free Bessel-Riccati
+   eigenmode (programming task 4, Igoshev/Elfritz/Popov 2016,
+   arXiv:1608.08806) which would satisfy the vacuum BC by construction.
+   Analytical work, not yet started -- implementation (wiring whichever
+   IC(s) into the drivers) is programming task 4/a new companion
+   programming task once the derivations exist.
 
 ## Programming tasks (scaffoldable now, independent of the above)
 
@@ -950,6 +1011,35 @@ directly relevant starting points, not blank-slate work:
      genuinely long run, not a flat rate -- not yet measured directly
      (would need a real long run, or a synthetic broad-spectrum IC, to
      characterize).
+10. **HIGH PRIORITY (flagged by user, 2026-08-29): energy-balance
+    violation concentrated in the first ~10 simulated years of the
+    Hall-crust-profile production run, still present after the
+    `HOLD_BOUNDARY` fix above (see "Recently resolved").** Visible
+    directly in `results/hall_crust_profile_1000yr_fixed/plots/
+    energy_budget.png` -- `Edot_tot` spikes sharply in that early
+    window before settling toward its much-smaller, roughly-constant
+    late-time value.
+    **Root cause confirmed (2026-08-29, same day): the standard seed
+    IC badly violates the outer Robin BC** -- see analytical task 5
+    above for the full derivation/numbers (`dPhi/dr` off by ~30x the
+    Robin coefficient's own scale at `t=0`). The fix is analytical
+    work (deriving BC-consistent reference ICs), tracked as analytical
+    task 5, not further numerical investigation. Other candidate
+    contributors, not ruled out, likely secondary given how large and
+    well-explained the IC/BC mechanism already is:
+    - `HOLD_BOUNDARY`'s own placeholder (pinning the boundary at its
+      pre-substep value for the whole outer step's `N_SUB` explicit
+      substeps) is a coarser approximation exactly when the boundary
+      value is changing fastest -- which, per analytical task 5, is
+      driven by this same IC/BC mismatch early on.
+    - First-order Lie-splitting truncation error (`[N_SUB` explicit Hall
+      substeps`]` then `[1` implicit diffuse step`]`, see `hall_regime.f90`'s
+      own module header) is expected to be largest exactly when the
+      field is evolving fastest -- also the first ~10yr.
+    Once analytical task 5 produces a BC-consistent IC, worth re-running
+    the same convergence-check methodology (shrinking outer `DT`/`N_SUB`
+    over the first ~10yr window) to see how much of the remaining
+    violation these secondary effects still account for.
 
 ## Infrastructure
 
