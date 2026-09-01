@@ -23,13 +23,26 @@ MODULE HALL_REGIME
 !> every outer step with a diffuse call therefore enforces the correct
 !> physical BC exactly, for free, from already-tested machinery, with
 !> NO new BC-on-raw-vector code needed. The explicit Hall substeps in
-!> between only need a cheap, numerically-stabilizing placeholder BC
-!> (homogeneous Dirichlet, zeroed after each substep -- same trick
-!> app/mhdvsh_hall_stability_experiment.f90 already uses and has
-!> exercised for 2000 steps) to keep the FD stencils from being
-!> poisoned by an unconstrained boundary mid-substep; its exact form
-!> doesn't affect the final answer, since the trailing diffuse step
-!> overwrites it regardless.
+!> between need a cheap, numerically-stabilizing placeholder BC to keep
+!> the FD stencils from being poisoned by an unconstrained boundary
+!> mid-substep -- but its exact form does NOT turn out to be immaterial
+!> to the final answer the way this note originally assumed. A
+!> homogeneous-Dirichlet zero (matching app/mhdvsh_hall_stability_
+!> experiment.f90's own placeholder, exercised there for 2000 steps on a
+!> state whose boundary genuinely stayed near zero) was used here until
+!> 2026-08-29, when the user's own energy-conservation investigation
+!> traced a growing energy-balance residual to it: the outer boundary
+!> carries a real, physically nonzero value under this regime's Robin
+!> BC (this project's seed IC starts at exactly zero there, so the bug
+!> was invisible early on), and by 1000yr of Hall-driven evolution that
+!> boundary value had grown to ~60% of the field's own global max,
+!> sitting exactly where F_HALL is ~1e7x larger than at the inner
+!> boundary -- hard-zeroing it every RK4 stage, every substep, was
+!> empirically confirmed (HALL_SUBSTEPS' own docstring has the numbers)
+!> to pump total energy up >10x within a single outer step, silently
+!> absorbed back down by the trailing diffuse call. HALL_SUBSTEPS now
+!> holds the boundary FIXED at its pre-substep (last-diffusion-enforced)
+!> value instead of zeroing it -- same cost, no artificial discontinuity.
 !>
 !> Hyperresistivity is NOT included yet (a separate, deferred piece of
 !> work -- see ROADMAP.md/the Hall-regime design plan's Stage 3).
@@ -177,16 +190,47 @@ SUBROUTINE HALL_ADVANCE(STATE, DT, T)
 END SUBROUTINE HALL_ADVANCE
 
 !> N_SUB explicit classic-RK4 steps of HALL_INDUCTION_RHS at SAVED_DT_HALL,
-!> zeroing the boundary after every stage/substep for numerical hygiene
-!> (see module header -- not the physical BC, that's the trailing
-!> DIFFUSION_ADVANCE call's job).
+!> holding the boundary fixed at its pre-substep value after every
+!> stage/substep for numerical hygiene (see module header -- not the
+!> physical BC, that's the trailing DIFFUSION_ADVANCE call's job).
+!>
+!> @warning Was ZERO_BOUNDARY (hard-zero the boundary), not HOLD_BOUNDARY,
+!>   until 2026-08-29. Confirmed by the user's own energy-conservation
+!>   investigation that this was a real bug, not harmless "numerical
+!>   hygiene": the outer boundary has a Robin BC (not Dirichlet), so it
+!>   legitimately carries a nonzero, physically real field value -- for
+!>   this project's own seed IC that value is exactly zero at t=0 (hence
+!>   zeroing looked harmless in every early check), but grows over time
+!>   as Hall-driven redistribution pushes field toward the surface. By
+!>   results/hall_crust_profile_1000yr/'s own t=1000yr checkpoint, the
+!>   dominant mode's outer-boundary |Phi| (0.598) was already 60% of the
+!>   field's global max (0.994) -- and F_HALL there is ~4e7x its value at
+!>   the inner boundary. Hard-zeroing that large a value, every RK4 stage,
+!>   every substep, right where F_HALL is most extreme, was empirically
+!>   confirmed (a standalone dt_hall-convergence harness, isolating pure
+!>   Hall substepping with no trailing diffusion) to grow total magnetic
+!>   energy by 11.7x within a single outer step at t=1000yr -- a result
+!>   stable across dt_hall spanning a 128x range, i.e. a real effect, not
+!>   a discretization artifact. The trailing DIFFUSION_ADVANCE step (which
+!>   enforces the true Robin BC) was cancelling nearly all of this every
+!>   step, leaving behind the growing energy-balance residual that
+!>   motivated this investigation. Holding the boundary fixed at its
+!>   pre-substep (last-diffusion-enforced) value avoids the artificial
+!>   discontinuity while still being just as cheap/local a placeholder as
+!>   the zero it replaces.
 SUBROUTINE HALL_SUBSTEPS(STATE)
   TYPE(DIFFUSION_STATE_T), INTENT(INOUT) :: STATE
   TYPE(SPECTRAL_SCALAR_T) :: K1_PHI, K1_PSI, K2_PHI, K2_PSI, K3_PHI, K3_PSI, K4_PHI, K4_PSI
   TYPE(SPECTRAL_SCALAR_T) :: TMP_PHI, TMP_PSI
+  COMPLEX(KIND=dp), ALLOCATABLE :: PHI_IN(:), PHI_OUT(:), PSI_IN(:), PSI_OUT(:)
   INTEGER(KIND=i4) :: ISUB, N_R
 
   N_R = SAVED_RGRID%N
+  ALLOCATE(PHI_IN(STATE%PHI%NLM), PHI_OUT(STATE%PHI%NLM))
+  ALLOCATE(PSI_IN(STATE%PSI%NLM), PSI_OUT(STATE%PSI%NLM))
+  PHI_IN = STATE%PHI%COEF(1,:); PHI_OUT = STATE%PHI%COEF(N_R,:)
+  PSI_IN = STATE%PSI%COEF(1,:); PSI_OUT = STATE%PSI%COEF(N_R,:)
+
   DO ISUB = 1, SAVED_N_SUB
     CALL CALL_HALL_RHS(STATE%PHI, STATE%PSI, K1_PHI, K1_PSI)
 
@@ -194,25 +238,26 @@ SUBROUTINE HALL_SUBSTEPS(STATE)
     CALL ALLOC_SPECTRAL_SCALAR(TMP_PSI, N_R, SAVED_LMAX)
     TMP_PHI%COEF = STATE%PHI%COEF + 0.5_dp*SAVED_DT_HALL*K1_PHI%COEF
     TMP_PSI%COEF = STATE%PSI%COEF + 0.5_dp*SAVED_DT_HALL*K1_PSI%COEF
-    CALL ZERO_BOUNDARY(TMP_PHI, N_R); CALL ZERO_BOUNDARY(TMP_PSI, N_R)
+    CALL HOLD_BOUNDARY(TMP_PHI, PHI_IN, PHI_OUT, N_R); CALL HOLD_BOUNDARY(TMP_PSI, PSI_IN, PSI_OUT, N_R)
     CALL CALL_HALL_RHS(TMP_PHI, TMP_PSI, K2_PHI, K2_PSI)
 
     TMP_PHI%COEF = STATE%PHI%COEF + 0.5_dp*SAVED_DT_HALL*K2_PHI%COEF
     TMP_PSI%COEF = STATE%PSI%COEF + 0.5_dp*SAVED_DT_HALL*K2_PSI%COEF
-    CALL ZERO_BOUNDARY(TMP_PHI, N_R); CALL ZERO_BOUNDARY(TMP_PSI, N_R)
+    CALL HOLD_BOUNDARY(TMP_PHI, PHI_IN, PHI_OUT, N_R); CALL HOLD_BOUNDARY(TMP_PSI, PSI_IN, PSI_OUT, N_R)
     CALL CALL_HALL_RHS(TMP_PHI, TMP_PSI, K3_PHI, K3_PSI)
 
     TMP_PHI%COEF = STATE%PHI%COEF + SAVED_DT_HALL*K3_PHI%COEF
     TMP_PSI%COEF = STATE%PSI%COEF + SAVED_DT_HALL*K3_PSI%COEF
-    CALL ZERO_BOUNDARY(TMP_PHI, N_R); CALL ZERO_BOUNDARY(TMP_PSI, N_R)
+    CALL HOLD_BOUNDARY(TMP_PHI, PHI_IN, PHI_OUT, N_R); CALL HOLD_BOUNDARY(TMP_PSI, PSI_IN, PSI_OUT, N_R)
     CALL CALL_HALL_RHS(TMP_PHI, TMP_PSI, K4_PHI, K4_PSI)
 
     STATE%PHI%COEF = STATE%PHI%COEF + (SAVED_DT_HALL/6.0_dp) * &
       (K1_PHI%COEF + 2.0_dp*K2_PHI%COEF + 2.0_dp*K3_PHI%COEF + K4_PHI%COEF)
     STATE%PSI%COEF = STATE%PSI%COEF + (SAVED_DT_HALL/6.0_dp) * &
       (K1_PSI%COEF + 2.0_dp*K2_PSI%COEF + 2.0_dp*K3_PSI%COEF + K4_PSI%COEF)
-    CALL ZERO_BOUNDARY(STATE%PHI, N_R); CALL ZERO_BOUNDARY(STATE%PSI, N_R)
+    CALL HOLD_BOUNDARY(STATE%PHI, PHI_IN, PHI_OUT, N_R); CALL HOLD_BOUNDARY(STATE%PSI, PSI_IN, PSI_OUT, N_R)
   END DO
+  DEALLOCATE(PHI_IN, PHI_OUT, PSI_IN, PSI_OUT)
 END SUBROUTINE HALL_SUBSTEPS
 
 !> Forwards to HALL_INDUCTION_RHS, passing SAVED_F_HALL_PROFILE only when
@@ -229,16 +274,20 @@ SUBROUTINE CALL_HALL_RHS(PHI, PSI, PHI_DOT, PSI_DOT)
   END IF
 END SUBROUTINE CALL_HALL_RHS
 
-!> Zeros the outer/inner radial rows of every mode's coefficient --
-!> HALL_INDUCTION_RHS applies no BC itself (see its own docstring), this
-!> is the caller's job. Numerical-hygiene placeholder only during Hall
-!> substeps (see module header); the trailing DIFFUSION_ADVANCE call
-!> establishes the true physical BC regardless of what this leaves.
-SUBROUTINE ZERO_BOUNDARY(FIELD, N_R)
+!> Pins the outer/inner radial rows of every mode's coefficient to the
+!> given (pre-substep) boundary values -- HALL_INDUCTION_RHS applies no
+!> BC itself (see its own docstring), this is the caller's job.
+!> Numerical-hygiene placeholder only during Hall substeps (see module
+!> header/HALL_SUBSTEPS' own docstring); the trailing DIFFUSION_ADVANCE
+!> call establishes the true physical BC regardless of what this leaves.
+!> Replaced ZERO_BOUNDARY (2026-08-29) -- see HALL_SUBSTEPS' own
+!> docstring for why a hard zero was a real bug, not a harmless one.
+SUBROUTINE HOLD_BOUNDARY(FIELD, BND_IN, BND_OUT, N_R)
   TYPE(SPECTRAL_SCALAR_T), INTENT(INOUT) :: FIELD
+  COMPLEX(KIND=dp),        INTENT(IN)    :: BND_IN(:), BND_OUT(:)
   INTEGER(KIND=i4),        INTENT(IN)    :: N_R
-  FIELD%COEF(1,:)   = (0.0_dp, 0.0_dp)
-  FIELD%COEF(N_R,:) = (0.0_dp, 0.0_dp)
-END SUBROUTINE ZERO_BOUNDARY
+  FIELD%COEF(1,:)   = BND_IN
+  FIELD%COEF(N_R,:) = BND_OUT
+END SUBROUTINE HOLD_BOUNDARY
 
 END MODULE HALL_REGIME
