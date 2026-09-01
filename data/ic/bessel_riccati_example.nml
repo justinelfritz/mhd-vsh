@@ -1,0 +1,40 @@
+! Example initial-conditions namelist for INITIAL_CONDITIONS::READ_IC_NAMELIST
+! (src/core/initial_conditions.f90). Not yet read by any driver -- see
+! ROADMAP.md programming task 4 for status; this file documents the
+! format and can be copied/edited once a driver wires in an optional
+! namelist-path CLI argument.
+!
+! &IC_SELECT names the list of ACTIVE tags (composable by design,
+! 2026-08-29: every active tag's contribution accumulates into the same
+! Phi/Psi, so e.g. a future force-free base plus a Bessel-Riccati
+! perturbation could both be listed here at once). READ_IC_NAMELIST then
+! reads whichever model-specific group(s) those tags name. Only
+! 'bessel_riccati' exists so far, so this example lists just the one.
+&IC_SELECT
+  N_TAGS = 1
+  TAGS   = 'bessel_riccati'
+/
+
+! Each mode contributes f_n(x) = A*x*j_n(x) + B*x*y_n(x), x = X_SCALE*r,
+! to either PHI or PSI at spherical-harmonic degree/order (L,M). Modes
+! sharing the same (FIELD,L,M) accumulate (superpose), so a single
+! (l,m) can carry a multi-n radial spectrum by repeating it across
+! several array entries. j_n/y_n are evaluated by SPHERICAL_BESSEL --
+! stable to n=20 (src/core/spherical_bessel.f90).
+!
+! This example reproduces this project's own long-standing ad hoc seed
+! IC (Phi(l=1,m=0)=sin(pi*(r-R_min)/(R_max-R_min)), Psi=0) is NOT what's
+! below -- that profile isn't a Riccati-Bessel combination. Below is
+! instead a simple single-mode illustration: at n=0, x*j_0(x)=sin(x), so
+! this reduces to Phi(l=1,m=0,r) = sin(r) with X_SCALE=1 (a plain
+! amplitude-1, A-branch-only, n=0 mode).
+&BESSEL_RICCATI_MODES
+  N_MODES      = 1
+  MODE_FIELD   = 'phi'
+  MODE_L       = 1
+  MODE_M       = 0
+  MODE_N       = 0
+  MODE_X_SCALE = 1.0
+  MODE_A       = 1.0
+  MODE_B       = 0.0
+/

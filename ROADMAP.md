@@ -940,6 +940,37 @@ directly relevant starting points, not blank-slate work:
    so it's an implementation task, not an open derivation: spherical
    Bessel functions `j_l`/`n_l` (FORTVSH provides none) + a root-finder
    for the transcendental eigenvalue equation.
+   **Foundation now built (2026-08-29, `bessel_ics` branch), full task
+   still open**: `src/core/spherical_bessel.f90` -- stable `j_n`/`y_n`
+   via Miller's algorithm (downward + closed-form renormalization for
+   `j_n`, plain upward for `y_n`; opposite stability directions, see
+   the module's own header), verified `n=0..20` against the exact
+   Wronskian identity plus closed-form cross-checks, all to ~1e-16
+   relative error. `src/core/initial_conditions.f90` -- a new,
+   general-purpose IC module (tag-dispatched, first tag
+   `'bessel_riccati'`) replacing the ad hoc seed every Hall driver
+   duplicated inline; mode spectrum specified via a NAMELIST file
+   (confirmed with user: zero new dependencies, matches this project's
+   existing minimal-dependency policy). **Composable by design**
+   (confirmed with user, 2026-08-29): `&IC_SELECT` names a LIST of
+   active tags (`N_TAGS`/`TAGS`), and `BUILD_INITIAL_CONDITION`
+   allocates `Phi`/`Psi` once and lets every active tag's builder
+   ACCUMULATE into the same fields, so a future run could layer e.g. a
+   force-free base with a Bessel-Riccati perturbation. Only one real
+   category exists so far, so this is tested today only via the same
+   tag listed twice (confirmed to give exactly double the single-tag
+   result) -- genuine cross-category composition is unexercised until a
+   second category exists, but the plumbing is ready. Example file:
+   `data/ic/bessel_riccati_example.nml`. Both modules tested
+   (`test_spherical_bessel`, `test_initial_conditions`, `ctest` 16/16).
+   **Still missing**: the transcendental-eigenvalue root-finder itself
+   (no root-finder of any kind exists in this codebase yet) and the
+   specific force-free Phi/Psi amplitude coupling -- this pass built
+   general user-specified Riccati-Bessel superpositions, not yet true
+   force-free eigenmodes. Also not yet done: wiring the new module into
+   any driver (proof-of-concept integration deferred), and retrofitting
+   `mhdvsh_hall.f90`/`mhdvsh_hall_adaptive.f90`/`mhdvsh_diffusion.f90`
+   off their duplicated inline seed loops.
 5. **Formal regression test for the energy-balance identity itself** --
    currently only checked informally (comparing a real run's logged
    data by hand/script), not as a `CTest`. Would need a documented,
