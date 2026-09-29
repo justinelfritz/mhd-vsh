@@ -75,6 +75,8 @@ add_library(mhdvsh_core STATIC
   src/core/eos_table.f90
   src/core/tov_solver.f90
   src/core/crust_conductivity.f90
+  src/core/spherical_bessel.f90
+  src/core/initial_conditions.f90
 )
 set_target_properties(mhdvsh_core PROPERTIES
   Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod"
@@ -193,6 +195,48 @@ set_target_properties(mhdvsh_hall_crust_profile PROPERTIES
   Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_crust_profile"
 )
 target_link_libraries(mhdvsh_hall_crust_profile PRIVATE mhdvsh_core)
+
+# Byte-for-byte copy of mhdvsh_hall_crust_profile, LMAX raised 30->45 --
+# one-off verification build (2026-08-29) testing whether the production
+# run's growing energy-balance residual is a spectral-truncation effect
+# (see the driver's own header). Not a permanent feature; delete once the
+# question is settled.
+add_executable(mhdvsh_hall_crust_profile_lmax_test EXCLUDE_FROM_ALL
+  ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall_crust_profile_lmax_test.f90)
+set_target_properties(mhdvsh_hall_crust_profile_lmax_test PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_crust_profile_lmax_test"
+)
+target_link_libraries(mhdvsh_hall_crust_profile_lmax_test PRIVATE mhdvsh_core)
+
+# dt_hall convergence check for HALL_POYNTING_FLUX_RATE against a REAL,
+# multi-mode-coupled checkpoint state (see the driver's own header) --
+# one-off verification build, 2026-08-29. Not a permanent feature.
+add_executable(mhdvsh_hall_convergence_check EXCLUDE_FROM_ALL
+  app/mhdvsh_hall_convergence_check.f90)
+set_target_properties(mhdvsh_hall_convergence_check PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_convergence_check"
+)
+target_link_libraries(mhdvsh_hall_convergence_check PRIVATE mhdvsh_core)
+
+# Dumps the seed IC's Phi(r) profile and checks the Robin-BC residual
+# using the real FD operator (see the driver's own header) -- one-off
+# diagnostic build, 2026-08-29. Not a permanent feature.
+add_executable(mhdvsh_ic_boundary_check EXCLUDE_FROM_ALL
+  app/mhdvsh_ic_boundary_check.f90)
+set_target_properties(mhdvsh_ic_boundary_check PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_ic_boundary_check"
+)
+target_link_libraries(mhdvsh_ic_boundary_check PRIVATE mhdvsh_core)
+
+# Same Robin-BC-residual check as mhdvsh_ic_boundary_check, but reading
+# a REAL, already-completed simulation's own checkpoint file instead of
+# reconstructing the IC fresh -- one-off diagnostic build, 2026-08-29.
+add_executable(mhdvsh_checkpoint_boundary_check EXCLUDE_FROM_ALL
+  app/mhdvsh_checkpoint_boundary_check.f90)
+set_target_properties(mhdvsh_checkpoint_boundary_check PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_checkpoint_boundary_check"
+)
+target_link_libraries(mhdvsh_checkpoint_boundary_check PRIVATE mhdvsh_core)
 
 # ── Artifacts (plots/data regenerated automatically with every build) ───────
 # Directory convention: artifacts/<regime>/<diagnostic>/{data,plots}/ -- one
@@ -381,3 +425,23 @@ set_target_properties(test_crust_conductivity PROPERTIES
 )
 target_link_libraries(test_crust_conductivity PRIVATE mhdvsh_core)
 add_test(NAME crust_conductivity COMMAND test_crust_conductivity)
+
+# test_spherical_bessel's checks (closed-form cross-checks, the exact
+# Wronskian identity, and a finite-difference derivative check) are all
+# computed in-test -- no reference file, no WORKING_DIRECTORY needed.
+add_executable(test_spherical_bessel test/test_spherical_bessel.f90)
+set_target_properties(test_spherical_bessel PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_spherical_bessel"
+)
+target_link_libraries(test_spherical_bessel PRIVATE mhdvsh_core)
+add_test(NAME spherical_bessel COMMAND test_spherical_bessel)
+
+# test_initial_conditions writes/reads its own scratch namelist file
+# (test_initial_conditions_scratch.nml, deleted at the end of the run,
+# same convention as test_io_checkpoint's own scratch checkpoint file).
+add_executable(test_initial_conditions test/test_initial_conditions.f90)
+set_target_properties(test_initial_conditions PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_initial_conditions"
+)
+target_link_libraries(test_initial_conditions PRIVATE mhdvsh_core)
+add_test(NAME initial_conditions COMMAND test_initial_conditions)

@@ -1,8 +1,9 @@
 ! Example initial-conditions namelist for INITIAL_CONDITIONS::READ_IC_NAMELIST
-! (src/core/initial_conditions.f90). Not yet read by any driver -- see
-! ROADMAP.md programming task 4 for status; this file documents the
-! format and can be copied/edited once a driver wires in an optional
-! namelist-path CLI argument.
+! (src/core/initial_conditions.f90). Wired in 2026-09-27 as an optional,
+! 8th CLI argument to app/mhdvsh_hall_crust_profile.f90 (ic_namelist_path
+! -- see that driver's own header); absent, the driver falls back to its
+! original hardcoded seed unchanged. See ROADMAP.md programming task 4
+! for the module's overall status.
 !
 ! &IC_SELECT names the list of ACTIVE tags (composable by design,
 ! 2026-08-29: every active tag's contribution accumulates into the same
@@ -22,19 +23,37 @@
 ! several array entries. j_n/y_n are evaluated by SPHERICAL_BESSEL --
 ! stable to n=20 (src/core/spherical_bessel.f90).
 !
-! This example reproduces this project's own long-standing ad hoc seed
-! IC (Phi(l=1,m=0)=sin(pi*(r-R_min)/(R_max-R_min)), Psi=0) is NOT what's
-! below -- that profile isn't a Riccati-Bessel combination. Below is
-! instead a simple single-mode illustration: at n=0, x*j_0(x)=sin(x), so
-! this reduces to Phi(l=1,m=0,r) = sin(r) with X_SCALE=1 (a plain
-! amplitude-1, A-branch-only, n=0 mode).
+! MODE_X_SCALE below is NOT an arbitrary 1.0 -- it's tuned (2026-09-27)
+! so that x*j_0(x)=sin(x) vanishes almost exactly at both this driver's
+! own live TOV-derived crust boundaries, R_min=10.3029 km and
+! R_max=11.5621 km (X_SCALE=8*pi/R_min puts a zero of sin(x) exactly at
+! R_min and within ~7% of a zero at R_max, the closest integer-multiple-
+! of-pi match for this R_max/R_min ratio). This matters empirically, not
+! just cosmetically: a first attempt at this example used a plain
+! X_SCALE=1 (reducing to the naive Phi(l=1,m=0,r)=sin(r), which is O(1)
+! and non-vanishing at both boundaries) and reliably triggered
+! mhdvsh_hall_crust_profile's own blow-up detector within ~1-2 outer
+! steps, REGARDLESS of cfl_safety (tested down to 50x smaller dt_hall)
+! or overall mode amplitude (tested down to 1000x smaller A) -- i.e. a
+! genuine boundary-localized Hall instability, not an ordinary CFL/
+! discretization artifact, tied to the single outermost grid node's
+! already-documented extreme Rmag (~126 even after this driver's own
+! truncation; see that driver's header). Forcing the mode to vanish at
+! the boundaries (this file) instead of just scaling its amplitude
+! removes the trigger; verified stable (energy decreasing, no blowup)
+! over a 2000-step / ~1000yr-scale run of mhdvsh_hall_crust_profile.
+! This is still just a hand-picked, approximately-boundary-consistent
+! mode, NOT the true force-free/BC-exact eigenmode (that needs the
+! still-deferred transcendental-eigenvalue root-finder, ROADMAP.md
+! programming task 4) -- it's a stable worked example, not a physical
+! claim.
 &BESSEL_RICCATI_MODES
   N_MODES      = 1
   MODE_FIELD   = 'phi'
   MODE_L       = 1
   MODE_M       = 0
   MODE_N       = 0
-  MODE_X_SCALE = 1.0
+  MODE_X_SCALE = 2.4393851467759897
   MODE_A       = 1.0
   MODE_B       = 0.0
 /

@@ -1,3 +1,18 @@
+!> LMAX=45 verification variant of mhdvsh_hall_crust_profile.f90 (built
+!> 2026-08-29, per user request), otherwise byte-for-byte identical --
+!> same TOV profile, same eta(r)/f_H(r), same seed IC, same T_MAX_TARGET.
+!> Sole purpose: test whether the LMAX=30 production run's growing
+!> energy-balance residual (E_tot drifting to ~-0.94x the Hall Poynting
+!> flux by t=1000yr, a nearly CONSTANT ratio from t~150yr onward -- see
+!> results/hall_crust_profile_1000yr/) shrinks when the spectral
+!> truncation boundary (HALL_INDUCTION_RHS's N_HI=MIN(LMAX,K+K2), which
+!> silently drops Hall mode-coupling contributions targeting l>LMAX) is
+!> moved further from where the Hall-driven cascade currently sits (max
+!> populated l=16 at LMAX=30). If the residual/Hall-Poynting ratio drops
+!> materially at LMAX=45, that confirms spectral truncation as the cause;
+!> if the ratio stays pinned near -0.94 regardless, that points instead
+!> to a fixed coefficient/normalization mismatch unrelated to LMAX.
+!>
 !> Combined resistive+Hall regime driver with a REAL, radially-varying
 !> eta(r)/f_H(r) (not a uniform toy constant, and not one physically-
 !> sourced constant like mhdvsh_hall_crust_sample.f90) -- solves the TOV
@@ -51,21 +66,9 @@
 !>
 !> Usage: mhdvsh_hall_crust_profile <n_steps> <n_sub> [cfl_safety]
 !>   [energy_data_path] [energy_by_l_path] [checkpoint_path] [resume_path]
-!>   [ic_namelist_path]
 !> cfl_safety defaults to 0.5 (matching mhdvsh_hall_adaptive.f90's own
 !> choice) if omitted; argument meanings for the path arguments
 !> identical to app/mhdvsh_hall.f90's own.
-!>
-!> @note ic_namelist_path (added 2026-09-27, proof-of-concept integration
-!>   of INITIAL_CONDITIONS/SPHERICAL_BESSEL, src/core/initial_conditions.f90):
-!>   when given AND this is a fresh start (not a --resume), the seed field
-!>   is built from this NAMELIST file via INITIAL_CONDITIONS::
-!>   READ_IC_NAMELIST/BUILD_INITIAL_CONDITION instead of this driver's own
-!>   hardcoded single-mode Phi(l=1,m=0)=sin(pi*(r-R_min)/(R_max-R_min))
-!>   seed -- see data/ic/bessel_riccati_example.nml for the format. Absent,
-!>   behavior is bit-identical to before (non-breaking for every existing
-!>   invocation). Ignored when resuming from a checkpoint (the checkpoint's
-!>   own state is authoritative there).
 !>
 !> @warning n_steps is now an upper SAFETY CAP, not the real target
 !>   (added 2026-08-24, see TIMESTEPPER::RUN_ADAPTIVE's own T_MAX
@@ -77,7 +80,7 @@
 !>
 !> Units: same convention as mhdvsh_hall.f90 (UNITS::ENERGY_UNIT_ERG/
 !> POWER_UNIT_ERG_PER_S applied only at this reporting layer).
-PROGRAM MHDVSH_HALL_CRUST_PROFILE
+PROGRAM MHDVSH_HALL_CRUST_PROFILE_LMAX_TEST
 USE, INTRINSIC :: IEEE_ARITHMETIC, ONLY: IEEE_VALUE, IEEE_QUIET_NAN, IEEE_IS_NAN
 USE KINDS,              ONLY: dp, i4
 USE VSH,                ONLY: YLM_INDEX
@@ -96,11 +99,10 @@ USE UNITS,              ONLY: ENERGY_UNIT_ERG, POWER_UNIT_ERG_PER_S
 USE IO_CHECKPOINT,      ONLY: WRITE_CHECKPOINT, READ_CHECKPOINT
 USE TOV_SOLVER,         ONLY: TOV_PROFILE_T, SOLVE_TOV_STAR
 USE CRUST_CONDUCTIVITY, ONLY: ETA_AND_F_HALL_ON_GRID, FIND_TRUNCATION_RADIUS
-USE INITIAL_CONDITIONS, ONLY: IC_MODE_T, READ_IC_NAMELIST, BUILD_INITIAL_CONDITION
 IMPLICIT NONE
 
 INTEGER(KIND=i4), PARAMETER :: N_R     = 40
-INTEGER(KIND=i4), PARAMETER :: LMAX    = 30
+INTEGER(KIND=i4), PARAMETER :: LMAX    = 45  ! bumped from the production run's 30, see this file's own header
 REAL(KIND=dp),    PARAMETER :: NBAR_CENTRAL = 0.5447307_dp   ! fm**-3, M=1.40 reference star, matches mhdvsh_tov.f90
 CHARACTER(LEN=*), PARAMETER :: EOS_PATH = 'data/eos/APR_EOS_Cat.dat'
 INTEGER(KIND=i4), PARAMETER :: NPOINTS_TOV = 414              ! matches mhdvsh_tov.f90
@@ -150,20 +152,16 @@ REAL(KIND=dp) :: DT0, TC0, CFL_SAFETY, E0, E1
 REAL(KIND=dp) :: PREV_E_POL, PREV_E_TOR, LAST_T
 INTEGER(KIND=i4) :: N_STEPS, N_SUB
 INTEGER(KIND=i4) :: IR, L
-CHARACTER(LEN=1024) :: DATA_PATH, ENERGY_L_PATH, CHECKPOINT_PATH, RESUME_PATH, IC_NAMELIST_PATH, ARG
+CHARACTER(LEN=1024) :: DATA_PATH, ENERGY_L_PATH, CHECKPOINT_PATH, RESUME_PATH, ARG
 CHARACTER(LEN=16) :: COL_LABEL
-CHARACTER(LEN=256) :: SEED_IC_DESCRIPTION
 LOGICAL :: WRITE_DATA, WRITE_ENERGY_L, WRITE_CHECKPOINT_FLAG, RESUMING, NEED_ON_STEP, BLOWN_UP
-LOGICAL :: USE_IC_NAMELIST
 INTEGER(KIND=i4) :: ISTEP_START, N_STEPS_REMAINING
 INTEGER(KIND=i4) :: N_R_CK, LMAX_CK
 REAL(KIND=dp)    :: T_START, R_MIN_CK, R_MAX_CK
-CHARACTER(LEN=64), ALLOCATABLE :: IC_TAGS(:)
-TYPE(IC_MODE_T),   ALLOCATABLE :: IC_MODES(:)
 
 IF (COMMAND_ARGUMENT_COUNT() < 2) THEN
   WRITE(*,'(A)') 'Usage: mhdvsh_hall_crust_profile <n_steps> <n_sub> [cfl_safety] ' // &
-    '[energy_data_path] [energy_by_l_path] [checkpoint_path] [resume_path] [ic_namelist_path]'
+    '[energy_data_path] [energy_by_l_path] [checkpoint_path] [resume_path]'
   STOP 1
 END IF
 CALL GET_COMMAND_ARGUMENT(1, ARG); READ(ARG,*) N_STEPS
@@ -206,16 +204,9 @@ F_HALL_MID = F_HALL_PROFILE(N_R/2)
 ! limited) DT depends on the actual starting field, same ordering as
 ! app/mhdvsh_hall_adaptive.f90's own (compute TC0/DT0 from the seeded
 ! state, then call HALL_INIT with that DT0, not an arbitrary guess).
-! resume_path (arg 7) is blank ('') rather than omitted whenever the
-! caller wants to reach ic_namelist_path (arg 8) on a fresh, non-resuming
-! start -- an empty resume_path is not a valid checkpoint to resume from,
-! so it's treated the same as omitting the argument entirely.
-RESUMING = .FALSE.
-IF (COMMAND_ARGUMENT_COUNT() >= 7) THEN
-  CALL GET_COMMAND_ARGUMENT(7, RESUME_PATH)
-  RESUMING = (LEN_TRIM(RESUME_PATH) > 0)
-END IF
+RESUMING = (COMMAND_ARGUMENT_COUNT() >= 7)
 IF (RESUMING) THEN
+  CALL GET_COMMAND_ARGUMENT(7, RESUME_PATH)
   CALL READ_CHECKPOINT(TRIM(RESUME_PATH), ISTEP_START, T_START, STATE%PHI, STATE%PSI, &
     N_R_CK, LMAX_CK, R_MIN_CK, R_MAX_CK)
   IF (N_R_CK /= N_R .OR. LMAX_CK /= LMAX .OR. &
@@ -230,25 +221,14 @@ IF (RESUMING) THEN
 ELSE
   ISTEP_START = 0_i4
   T_START = 0.0_dp
+  CALL ALLOC_SPECTRAL_SCALAR(STATE%PHI, N_R, LMAX)
+  CALL ALLOC_SPECTRAL_SCALAR(STATE%PSI, N_R, LMAX)
 
-  USE_IC_NAMELIST = (COMMAND_ARGUMENT_COUNT() >= 8)
-  IF (USE_IC_NAMELIST) THEN
-    CALL GET_COMMAND_ARGUMENT(8, IC_NAMELIST_PATH)
-    CALL READ_IC_NAMELIST(TRIM(IC_NAMELIST_PATH), IC_TAGS, IC_MODES)
-    CALL BUILD_INITIAL_CONDITION(IC_TAGS, IC_MODES, RGRID, LMAX, STATE%PHI, STATE%PSI)
-    WRITE(SEED_IC_DESCRIPTION,'(A,A)') 'INITIAL_CONDITIONS namelist: ', TRIM(IC_NAMELIST_PATH)
-  ELSE
-    CALL ALLOC_SPECTRAL_SCALAR(STATE%PHI, N_R, LMAX)
-    CALL ALLOC_SPECTRAL_SCALAR(STATE%PSI, N_R, LMAX)
-
-    ! Single seed mode, identical to mhdvsh_hall.f90's own IC (default,
-    ! non-breaking fallback when ic_namelist_path is omitted).
-    DO IR = 1, N_R
-      STATE%PHI%COEF(IR, YLM_INDEX(1_i4,0_i4)) = &
-        CMPLX(SIN(PI*(RGRID%R(IR)-R_MIN)/(R_MAX-R_MIN)), 0.0_dp, KIND=dp)
-    END DO
-    SEED_IC_DESCRIPTION = 'single mode Phi(l=1,m=0)=sin(pi*(r-R_MIN)/(R_MAX-R_MIN)), Psi=0'
-  END IF
+  ! Single seed mode, identical to mhdvsh_hall.f90's own IC.
+  DO IR = 1, N_R
+    STATE%PHI%COEF(IR, YLM_INDEX(1_i4,0_i4)) = &
+      CMPLX(SIN(PI*(RGRID%R(IR)-R_MIN)/(R_MAX-R_MIN)), 0.0_dp, KIND=dp)
+  END DO
 END IF
 LAST_T = T_START
 
@@ -289,7 +269,7 @@ IF (WRITE_DATA) THEN
     WRITE(DATA_UNIT,'(A)') '#   eta(r)/f_H(r): full radial profile via CRUST_CONDUCTIVITY::' // &
       'ETA_AND_F_HALL_ON_GRID from a fresh SOLVE_TOV_STAR (NBAR_CENTRAL=0.5447307 fm**-3, ' // &
       'data/eos/APR_EOS_Cat.dat), NOT a uniform constant'
-    WRITE(DATA_UNIT,'(A,A)') '#   seed IC: ', TRIM(SEED_IC_DESCRIPTION)
+    WRITE(DATA_UNIT,'(A)') '#   seed IC: single mode Phi(l=1,m=0)=sin(pi*(r-R_MIN)/(R_MAX-R_MIN)), Psi=0'
     WRITE(DATA_UNIT,'(A)') '# step  t_yr  dt_yr  tc_raw_yr  E_poloidal_erg  E_toroidal_erg' // &
       '  EDOT_poloidal_erg_per_s  EDOT_toroidal_erg_per_s' // &
       '  joule_dissipation_rate_erg_per_s  poynting_flux_rate_erg_per_s' // &
@@ -377,7 +357,6 @@ WRITE(*,'(A,ES12.5,A,ES12.5,A)') '  initial dt   = ', DT0, ' yr (cfl_safety*tc, 
 WRITE(*,'(A,I0,A,I0,A)')  '  N_steps      = ', N_STEPS, ' (dt recomputed every ', N_SUB, ' steps)'
 WRITE(*,'(A,ES12.5,A)')   '  final t      = ', LAST_T, ' yr'
 IF (RESUMING) WRITE(*,'(A,I0,A,A)') '  resumed from step ', ISTEP_START, ' via ', TRIM(RESUME_PATH)
-IF (.NOT. RESUMING) WRITE(*,'(A,A)') '  seed IC       = ', TRIM(SEED_IC_DESCRIPTION)
 WRITE(*,'(A,ES12.5,A)')   '  energy(t=0)  = ', E0*ENERGY_UNIT_ERG, ' erg'
 WRITE(*,'(A,ES12.5,A)')   '  energy(t=end)= ', E1*ENERGY_UNIT_ERG, ' erg'
 IF (BLOWN_UP) THEN
@@ -469,4 +448,4 @@ SUBROUTINE LOG_ENERGY_BY_L(ISTEP_ARG, T_ARG)
   WRITE(ENERGY_L_UNIT,'(A)') ''
 END SUBROUTINE LOG_ENERGY_BY_L
 
-END PROGRAM MHDVSH_HALL_CRUST_PROFILE
+END PROGRAM MHDVSH_HALL_CRUST_PROFILE_LMAX_TEST
