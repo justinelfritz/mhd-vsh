@@ -81,7 +81,7 @@
 !>   is built from this NAMELIST file via INITIAL_CONDITIONS::
 !>   READ_IC_NAMELIST/BUILD_INITIAL_CONDITION instead of this driver's own
 !>   hardcoded single-mode Phi(l=1,m=0)=sin(pi*(r-R_min)/(R_max-R_min))
-!>   seed -- see data/ic/bessel_riccati_example.nml for the format. Absent,
+!>   seed -- see data/ic/force_free_bessel_example.nml for the format. Absent,
 !>   behavior is bit-identical to before (non-breaking for every existing
 !>   invocation). Ignored when resuming from a checkpoint (the checkpoint's
 !>   own state is authoritative there).
