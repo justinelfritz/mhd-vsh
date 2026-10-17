@@ -51,9 +51,40 @@
 !>
 !> Usage: mhdvsh_hall_crust_profile <n_steps> <n_sub> [cfl_safety]
 !>   [energy_data_path] [energy_by_l_path] [checkpoint_path] [resume_path]
+!>   [ic_namelist_path] [grid_path]
 !> cfl_safety defaults to 0.5 (matching mhdvsh_hall_adaptive.f90's own
 !> choice) if omitted; argument meanings for the path arguments
 !> identical to app/mhdvsh_hall.f90's own.
+!>
+!> @note grid_path (added 2026-10-16, EOS-derived equidistributed grid,
+!>   see src/core/grid_radial.f90::BUILD_RADIAL_GRID_FROM_FILE and
+!>   app/mhdvsh_tov.f90's own grid-writing step): when given, N_R/R_MIN/
+!>   R_MAX are all taken directly from the file (N_R is no longer the
+!>   compile-time 40 below) INSTEAD of this driver's own uniform
+!>   BUILD_RADIAL_GRID + FIND_TRUNCATION_RADIUS call. Absent, behavior
+!>   is bit-identical to before (non-breaking).
+!>   @warning app/mhdvsh_tov.f90's grid file uses the FULL untruncated
+!>     crust extent (its own RHOL_CGS mask), NOT this driver's
+!>     THETA_MAX_TRUNCATE-truncated R_MAX -- that truncation is simply
+!>     skipped in this branch. Two independent fine-grid smoke tests
+!>     (app/mhdvsh_hall_crust_profile_geogrid.f90, _tovgrid.f90) already
+!>     blew up (NaN within 20 steps) once the near-surface layer was
+!>     properly resolved at the SAME truncated R_MAX this driver
+!>     normally uses -- using the untruncated extent here is expected
+!>     to be at least as unstable, not a regression introduced by this
+!>     argument. Whether the explicit Hall substep scheme can be made
+!>     stable at this resolution at all is still an open question.
+!>
+!> @note ic_namelist_path (added 2026-09-27, proof-of-concept integration
+!>   of INITIAL_CONDITIONS/SPHERICAL_BESSEL, src/core/initial_conditions.f90):
+!>   when given AND this is a fresh start (not a --resume), the seed field
+!>   is built from this NAMELIST file via INITIAL_CONDITIONS::
+!>   READ_IC_NAMELIST/BUILD_INITIAL_CONDITION instead of this driver's own
+!>   hardcoded single-mode Phi(l=1,m=0)=sin(pi*(r-R_min)/(R_max-R_min))
+!>   seed -- see data/ic/force_free_bessel_example.nml for the format. Absent,
+!>   behavior is bit-identical to before (non-breaking for every existing
+!>   invocation). Ignored when resuming from a checkpoint (the checkpoint's
+!>   own state is authoritative there).
 !>
 !> @warning n_steps is now an upper SAFETY CAP, not the real target
 !>   (added 2026-08-24, see TIMESTEPPER::RUN_ADAPTIVE's own T_MAX
@@ -69,7 +100,8 @@ PROGRAM MHDVSH_HALL_CRUST_PROFILE
 USE, INTRINSIC :: IEEE_ARITHMETIC, ONLY: IEEE_VALUE, IEEE_QUIET_NAN, IEEE_IS_NAN
 USE KINDS,              ONLY: dp, i4
 USE VSH,                ONLY: YLM_INDEX
-USE GRID_RADIAL,        ONLY: RADIAL_GRID_T, BUILD_RADIAL_GRID
+USE GRID_RADIAL,        ONLY: RADIAL_GRID_T, BUILD_RADIAL_GRID, BUILD_RADIAL_GRID_FROM_FILE, &
+                               RADIAL_GEOMETRIC_OUTER
 USE RADIAL_OPERATORS,   ONLY: RADIAL_OPERATOR_T, BUILD_RADIAL_OPERATORS
 USE FIELD_TYPES,        ONLY: SPECTRAL_SCALAR_T, ALLOC_SPECTRAL_SCALAR
 USE FIELD_DIAGNOSTICS,  ONLY: TOTAL_MAGNETIC_ENERGY, TOTAL_POLOIDAL_MAGNETIC_ENERGY, &
@@ -84,9 +116,32 @@ USE UNITS,              ONLY: ENERGY_UNIT_ERG, POWER_UNIT_ERG_PER_S
 USE IO_CHECKPOINT,      ONLY: WRITE_CHECKPOINT, READ_CHECKPOINT
 USE TOV_SOLVER,         ONLY: TOV_PROFILE_T, SOLVE_TOV_STAR
 USE CRUST_CONDUCTIVITY, ONLY: ETA_AND_F_HALL_ON_GRID, FIND_TRUNCATION_RADIUS
+USE INITIAL_CONDITIONS, ONLY: IC_MODE_T, FF_MODE_T, READ_IC_NAMELIST, BUILD_INITIAL_CONDITION
 IMPLICIT NONE
 
-INTEGER(KIND=i4), PARAMETER :: N_R     = 40
+INTEGER(KIND=i4), PARAMETER :: N_R_DEFAULT = 50
+! GRID_STRETCH_PARAM (added 2026-10-17, per user request): the default
+! (non-grid_path) grid is now RADIAL_GEOMETRIC_OUTER, not RADIAL_UNIFORM
+! -- a plain analytic geometric clustering toward R_MAX, computed
+! directly from THIS driver's own truncated R_MIN/R_MAX, replacing the
+! earlier EOS-derived equidistribution/grid_path machinery as the
+! default path (grid_path remains available as an explicit alternative,
+! see the header note below).
+! @note empirical stability scan at N_R=50, cfl_safety=0.5, 50-step
+!   smoke tests of this exact IC (results below, min/max dr in km):
+!     Q=0.95 (5.8e-3--6.9e-2): clean energy decrease.
+!     Q=0.90 (8.1e-4--1.3e-1): clean energy decrease.
+!     Q=0.87 (2.0e-4--1.6e-1): clean energy decrease.
+!     Q=0.86 (1.3e-4--1.8e-1): energy GREW (1.03e42 vs 7.68e41 erg) --
+!       not yet a BLOWUP_FACTOR-flagged blowup, but clearly past the
+!       edge of good behavior.
+!     Q=0.85 (7.7e-5--1.9e-1): outright BLOWUP within 50 steps.
+!   So the instability boundary sits between Q=0.86 and 0.87. Q=0.88
+!   below keeps a safety margin on the stable side of that boundary
+!   while still resolving the near-surface layer far better than the
+!   old uniform N_R=40 grid (which missed the Rmag spike by ~4 orders
+!   of magnitude, see RADIAL_GEOMETRIC_OUTER's own module header).
+REAL(KIND=dp),    PARAMETER :: GRID_STRETCH_PARAM = 0.88_dp
 INTEGER(KIND=i4), PARAMETER :: LMAX    = 30
 REAL(KIND=dp),    PARAMETER :: NBAR_CENTRAL = 0.5447307_dp   ! fm**-3, M=1.40 reference star, matches mhdvsh_tov.f90
 CHARACTER(LEN=*), PARAMETER :: EOS_PATH = 'data/eos/APR_EOS_Cat.dat'
@@ -135,18 +190,23 @@ REAL(KIND=dp), ALLOCATABLE :: ETA_PROFILE(:), F_HALL_PROFILE(:), N_E_PROFILE(:)
 REAL(KIND=dp) :: R_MIN, R_MAX, ETA_MID, F_HALL_MID
 REAL(KIND=dp) :: DT0, TC0, CFL_SAFETY, E0, E1
 REAL(KIND=dp) :: PREV_E_POL, PREV_E_TOR, LAST_T
-INTEGER(KIND=i4) :: N_STEPS, N_SUB
+INTEGER(KIND=i4) :: N_STEPS, N_SUB, N_R
 INTEGER(KIND=i4) :: IR, L
-CHARACTER(LEN=1024) :: DATA_PATH, ENERGY_L_PATH, CHECKPOINT_PATH, RESUME_PATH, ARG
+CHARACTER(LEN=1024) :: DATA_PATH, ENERGY_L_PATH, CHECKPOINT_PATH, RESUME_PATH, IC_NAMELIST_PATH, GRID_PATH, ARG
 CHARACTER(LEN=16) :: COL_LABEL
+CHARACTER(LEN=256) :: SEED_IC_DESCRIPTION
 LOGICAL :: WRITE_DATA, WRITE_ENERGY_L, WRITE_CHECKPOINT_FLAG, RESUMING, NEED_ON_STEP, BLOWN_UP
+LOGICAL :: USE_IC_NAMELIST, USE_GRID_FILE
 INTEGER(KIND=i4) :: ISTEP_START, N_STEPS_REMAINING
 INTEGER(KIND=i4) :: N_R_CK, LMAX_CK
 REAL(KIND=dp)    :: T_START, R_MIN_CK, R_MAX_CK
+CHARACTER(LEN=64), ALLOCATABLE :: IC_TAGS(:)
+TYPE(IC_MODE_T),   ALLOCATABLE :: IC_MODES(:)
+TYPE(FF_MODE_T),   ALLOCATABLE :: IC_FF_MODES(:)
 
 IF (COMMAND_ARGUMENT_COUNT() < 2) THEN
   WRITE(*,'(A)') 'Usage: mhdvsh_hall_crust_profile <n_steps> <n_sub> [cfl_safety] ' // &
-    '[energy_data_path] [energy_by_l_path] [checkpoint_path] [resume_path]'
+    '[energy_data_path] [energy_by_l_path] [checkpoint_path] [resume_path] [ic_namelist_path] [grid_path]'
   STOP 1
 END IF
 CALL GET_COMMAND_ARGUMENT(1, ARG); READ(ARG,*) N_STEPS
@@ -161,11 +221,32 @@ END IF
 ! rather than hardcoding R_MIN/R_MAX the way app/mhdvsh_hall.f90 does --
 ! stays self-consistent if the EOS/TOV solve ever changes.
 CALL SOLVE_TOV_STAR(NBAR_CENTRAL, EOS_PATH, NPOINTS_TOV, PROFILE)
-R_MIN = MINVAL(PROFILE%R, MASK=PROFILE%RHOCGS <= RHOL_CGS)
-CALL FIND_TRUNCATION_RADIUS(PROFILE, T_KELVIN, R_MAX, THETA_MAX=THETA_MAX_TRUNCATE)
 
-CALL BUILD_RADIAL_GRID(RGRID, N_R, R_MIN, R_MAX, FULL_SPHERE=.FALSE.)
+USE_GRID_FILE = .FALSE.
+IF (COMMAND_ARGUMENT_COUNT() >= 9) THEN
+  CALL GET_COMMAND_ARGUMENT(9, GRID_PATH)
+  USE_GRID_FILE = (LEN_TRIM(GRID_PATH) > 0)
+END IF
+
+IF (USE_GRID_FILE) THEN
+  CALL BUILD_RADIAL_GRID_FROM_FILE(RGRID, TRIM(GRID_PATH))
+  N_R   = RGRID%N
+  R_MIN = RGRID%R_MIN
+  R_MAX = RGRID%R_MAX
+  WRITE(*,'(A,A)') 'MHDVSH_HALL_CRUST_PROFILE: using grid file ', TRIM(GRID_PATH)
+  WRITE(*,'(A,I0,A,ES12.5,A,ES12.5,A)') '  N_R=', N_R, '  R_MIN=', R_MIN, '  R_MAX=', R_MAX, ' km'
+  WRITE(*,'(A)') '  @warning: THETA_MAX_TRUNCATE truncation is skipped in this branch -- ' // &
+    'see this file''s own header note on grid_path'
+ELSE
+  N_R = N_R_DEFAULT
+  R_MIN = MINVAL(PROFILE%R, MASK=PROFILE%RHOCGS <= RHOL_CGS)
+  CALL FIND_TRUNCATION_RADIUS(PROFILE, T_KELVIN, R_MAX, THETA_MAX=THETA_MAX_TRUNCATE)
+  CALL BUILD_RADIAL_GRID(RGRID, N_R, R_MIN, R_MAX, FULL_SPHERE=.FALSE., &
+    STRETCH_TYPE=RADIAL_GEOMETRIC_OUTER, STRETCH_PARAM=GRID_STRETCH_PARAM)
+END IF
 CALL BUILD_RADIAL_OPERATORS(OPS, RGRID)
+WRITE(*,'(A,ES12.5,A,ES12.5,A)') '  grid dr range = ', MINVAL(RGRID%R(2:N_R)-RGRID%R(1:N_R-1)), &
+  ' -- ', MAXVAL(RGRID%R(2:N_R)-RGRID%R(1:N_R-1)), ' km'
 
 ! ---- Sample eta(r)/f_H(r)/n_e(r) onto THIS driver's own simulation
 ! grid (N_R=40 points), not PROFILE's own much denser log(P)-uniform
@@ -189,9 +270,16 @@ F_HALL_MID = F_HALL_PROFILE(N_R/2)
 ! limited) DT depends on the actual starting field, same ordering as
 ! app/mhdvsh_hall_adaptive.f90's own (compute TC0/DT0 from the seeded
 ! state, then call HALL_INIT with that DT0, not an arbitrary guess).
-RESUMING = (COMMAND_ARGUMENT_COUNT() >= 7)
-IF (RESUMING) THEN
+! resume_path (arg 7) is blank ('') rather than omitted whenever the
+! caller wants to reach ic_namelist_path (arg 8) on a fresh, non-resuming
+! start -- an empty resume_path is not a valid checkpoint to resume from,
+! so it's treated the same as omitting the argument entirely.
+RESUMING = .FALSE.
+IF (COMMAND_ARGUMENT_COUNT() >= 7) THEN
   CALL GET_COMMAND_ARGUMENT(7, RESUME_PATH)
+  RESUMING = (LEN_TRIM(RESUME_PATH) > 0)
+END IF
+IF (RESUMING) THEN
   CALL READ_CHECKPOINT(TRIM(RESUME_PATH), ISTEP_START, T_START, STATE%PHI, STATE%PSI, &
     N_R_CK, LMAX_CK, R_MIN_CK, R_MAX_CK)
   IF (N_R_CK /= N_R .OR. LMAX_CK /= LMAX .OR. &
@@ -206,14 +294,25 @@ IF (RESUMING) THEN
 ELSE
   ISTEP_START = 0_i4
   T_START = 0.0_dp
-  CALL ALLOC_SPECTRAL_SCALAR(STATE%PHI, N_R, LMAX)
-  CALL ALLOC_SPECTRAL_SCALAR(STATE%PSI, N_R, LMAX)
 
-  ! Single seed mode, identical to mhdvsh_hall.f90's own IC.
-  DO IR = 1, N_R
-    STATE%PHI%COEF(IR, YLM_INDEX(1_i4,0_i4)) = &
-      CMPLX(SIN(PI*(RGRID%R(IR)-R_MIN)/(R_MAX-R_MIN)), 0.0_dp, KIND=dp)
-  END DO
+  USE_IC_NAMELIST = (COMMAND_ARGUMENT_COUNT() >= 8)
+  IF (USE_IC_NAMELIST) THEN
+    CALL GET_COMMAND_ARGUMENT(8, IC_NAMELIST_PATH)
+    CALL READ_IC_NAMELIST(TRIM(IC_NAMELIST_PATH), IC_TAGS, IC_MODES, IC_FF_MODES)
+    CALL BUILD_INITIAL_CONDITION(IC_TAGS, IC_MODES, IC_FF_MODES, RGRID, LMAX, STATE%PHI, STATE%PSI)
+    WRITE(SEED_IC_DESCRIPTION,'(A,A)') 'INITIAL_CONDITIONS namelist: ', TRIM(IC_NAMELIST_PATH)
+  ELSE
+    CALL ALLOC_SPECTRAL_SCALAR(STATE%PHI, N_R, LMAX)
+    CALL ALLOC_SPECTRAL_SCALAR(STATE%PSI, N_R, LMAX)
+
+    ! Single seed mode, identical to mhdvsh_hall.f90's own IC (default,
+    ! non-breaking fallback when ic_namelist_path is omitted).
+    DO IR = 1, N_R
+      STATE%PHI%COEF(IR, YLM_INDEX(1_i4,0_i4)) = &
+        CMPLX(SIN(PI*(RGRID%R(IR)-R_MIN)/(R_MAX-R_MIN)), 0.0_dp, KIND=dp)
+    END DO
+    SEED_IC_DESCRIPTION = 'single mode Phi(l=1,m=0)=sin(pi*(r-R_MIN)/(R_MAX-R_MIN)), Psi=0'
+  END IF
 END IF
 LAST_T = T_START
 
@@ -254,7 +353,7 @@ IF (WRITE_DATA) THEN
     WRITE(DATA_UNIT,'(A)') '#   eta(r)/f_H(r): full radial profile via CRUST_CONDUCTIVITY::' // &
       'ETA_AND_F_HALL_ON_GRID from a fresh SOLVE_TOV_STAR (NBAR_CENTRAL=0.5447307 fm**-3, ' // &
       'data/eos/APR_EOS_Cat.dat), NOT a uniform constant'
-    WRITE(DATA_UNIT,'(A)') '#   seed IC: single mode Phi(l=1,m=0)=sin(pi*(r-R_MIN)/(R_MAX-R_MIN)), Psi=0'
+    WRITE(DATA_UNIT,'(A,A)') '#   seed IC: ', TRIM(SEED_IC_DESCRIPTION)
     WRITE(DATA_UNIT,'(A)') '# step  t_yr  dt_yr  tc_raw_yr  E_poloidal_erg  E_toroidal_erg' // &
       '  EDOT_poloidal_erg_per_s  EDOT_toroidal_erg_per_s' // &
       '  joule_dissipation_rate_erg_per_s  poynting_flux_rate_erg_per_s' // &
@@ -342,6 +441,7 @@ WRITE(*,'(A,ES12.5,A,ES12.5,A)') '  initial dt   = ', DT0, ' yr (cfl_safety*tc, 
 WRITE(*,'(A,I0,A,I0,A)')  '  N_steps      = ', N_STEPS, ' (dt recomputed every ', N_SUB, ' steps)'
 WRITE(*,'(A,ES12.5,A)')   '  final t      = ', LAST_T, ' yr'
 IF (RESUMING) WRITE(*,'(A,I0,A,A)') '  resumed from step ', ISTEP_START, ' via ', TRIM(RESUME_PATH)
+IF (.NOT. RESUMING) WRITE(*,'(A,A)') '  seed IC       = ', TRIM(SEED_IC_DESCRIPTION)
 WRITE(*,'(A,ES12.5,A)')   '  energy(t=0)  = ', E0*ENERGY_UNIT_ERG, ' erg'
 WRITE(*,'(A,ES12.5,A)')   '  energy(t=end)= ', E1*ENERGY_UNIT_ERG, ' erg'
 IF (BLOWN_UP) THEN

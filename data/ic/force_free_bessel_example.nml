@@ -1,0 +1,48 @@
+! Example initial-conditions namelist demonstrating the true force-free
+! Bessel-Riccati eigenmode ('force_free_bessel' tag,
+! src/core/initial_conditions.f90 + src/core/force_free_bessel.f90,
+! 2026-10-15), ROADMAP.md programming task 4's completion. Usable with
+! app/mhdvsh_hall_crust_profile.f90's optional ic_namelist_path argument
+! (8th CLI arg) exactly like data/ic/bessel_riccati_example.nml.
+!
+! Unlike 'bessel_riccati' (arbitrary, user-picked A/B/X_SCALE -- not
+! generally BC-consistent), this tag SOLVES for the eigenvalue mu_l and
+! the Riccati-Bessel mix (a,b) satisfying curl(B)=mu_l*B at degree l,
+! subject to Phi(R_min)=Phi(R_max)=0 exactly (hence Psi(R_min)=Psi(R_max)
+! =0 too, via the force-free coupling Psi_l(r)=-mu_l*Phi_l(r)). Per user
+! decision 2026-10-15: this prioritizes the exact Dirichlet BCs over the
+! outer Robin (vacuum-decay) condition -- see force_free_bessel.f90's own
+! header for the full derivation and the disclosed trade-off (the
+! resulting exterior vacuum potential is not guaranteed to decay).
+!
+! Each mode is (L,M,ROOT_INDEX,AMPLITUDE,OUTER_BC): ROOT_INDEX selects
+! which eigenvalue (1=smallest/"fundamental"); AMPLITUDE scales the
+! Riccati-Bessel a-coefficient directly (b is fixed by the inner BC, not
+! independently settable). Unlike 'bessel_riccati', each mode ALWAYS
+! contributes to both Phi and Psi together -- there is no MODE_FIELD.
+!
+! FF_MODE_OUTER_BC (2026-10-15) picks which outer condition the
+! eigenvalue is solved against -- this project's real outer BC
+! (Robin(Phi)+Dirichlet(Psi)=0) can't both be satisfied exactly once the
+! force-free coupling slaves Psi to Phi (see force_free_bessel.f90's own
+! header for the full derivation of both):
+!   'double_dirichlet' (this file): forces Phi(R_out)=0, hence B_r(R_out)
+!     =0 too -- a special case, not the generic multipole with a nonzero
+!     surface field. See force_free_bessel_arbitrary_value_example.nml
+!     for the other case (nonzero B_r at the surface).
+!   'arbitrary_value': normalizes Phi(R_out) to an arbitrary nonzero
+!     value instead (the paper's own Eqs. A17-A19 scheme) -- the
+!     physically typical nonzero-B_r-at-the-surface case.
+&IC_SELECT
+  N_TAGS = 1
+  TAGS   = 'force_free_bessel'
+/
+
+&FORCE_FREE_BESSEL_MODES
+  N_FF_MODES          = 1
+  FF_MODE_L           = 1
+  FF_MODE_M           = 0
+  FF_MODE_ROOT_INDEX  = 1
+  FF_MODE_AMPLITUDE   = 1.0
+  FF_MODE_OUTER_BC    = 'double_dirichlet'
+/

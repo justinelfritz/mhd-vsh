@@ -20,17 +20,24 @@ MODULE TEST_TOY_REGIME
 !> DT-dependent factorization) -- enough to confirm RUN_ADAPTIVE calls
 !> COMPUTE_DT/SET_DT at the right cadence and actually uses the DT they
 !> produce, without needing a second real regime just for this test.
-USE KINDS, ONLY: dp
+USE KINDS, ONLY: dp, i4
 IMPLICIT NONE
 PRIVATE
 PUBLIC :: TOY_STATE_T, TOY_ADVANCE, TOY_K, TOY_COMPUTE_DT, TOY_SET_DT, &
-          TOY_CFL_C, TOY_LAST_SET_DT, TOY_N_SET_DT_CALLS
+          TOY_CFL_C, TOY_LAST_SET_DT, TOY_N_SET_DT_CALLS, TOY_ON_STEP, TOY_LAST_ON_STEP_T
 
 REAL(KIND=dp), PARAMETER :: TOY_K = 0.3_dp
 REAL(KIND=dp), PARAMETER :: TOY_CFL_C = 0.1_dp
 
 REAL(KIND=dp)    :: TOY_LAST_SET_DT    = -1.0_dp
 INTEGER          :: TOY_N_SET_DT_CALLS = 0
+! Records the POST-increment T that RUN_ADAPTIVE's own ON_STEP call
+! receives (unlike TOY_STATE_T%T_LAST, which TOY_ADVANCE sets to the
+! PRE-increment T it was called with) -- needed to check T_MAX (added
+! 2026-08-24) actually lands the internal T exactly on the target,
+! since RUN_ADAPTIVE's own T is a local variable with no other way to
+! observe it from outside.
+REAL(KIND=dp)    :: TOY_LAST_ON_STEP_T = -1.0_dp
 
 TYPE :: TOY_STATE_T
   REAL(KIND=dp) :: Y      = 0.0_dp
@@ -70,13 +77,26 @@ SUBROUTINE TOY_SET_DT(DT)
   TOY_N_SET_DT_CALLS = TOY_N_SET_DT_CALLS + 1
 END SUBROUTINE TOY_SET_DT
 
+!> Matches TIMESTEPPER::REGIME_ON_STEP_I. Records the T it's given
+!> (RUN_ADAPTIVE calls this AFTER its own T=T+DT increment) -- see
+!> TOY_LAST_ON_STEP_T's own comment above for why this differs from
+!> TOY_STATE_T%T_LAST.
+SUBROUTINE TOY_ON_STEP(STATE, T, ISTEP)
+  CLASS(*),         INTENT(IN) :: STATE
+  REAL(KIND=dp),    INTENT(IN) :: T
+  INTEGER(KIND=i4), INTENT(IN) :: ISTEP
+  ASSOCIATE (UNUSED_STATE => STATE, UNUSED_ISTEP => ISTEP); END ASSOCIATE
+  TOY_LAST_ON_STEP_T = T
+END SUBROUTINE TOY_ON_STEP
+
 END MODULE TEST_TOY_REGIME
 
 PROGRAM TEST_TIMESTEPPER
 USE KINDS,           ONLY: dp, i4
 USE TIMESTEPPER,     ONLY: RUN, RUN_ADAPTIVE
 USE TEST_TOY_REGIME, ONLY: TOY_STATE_T, TOY_ADVANCE, TOY_K, TOY_COMPUTE_DT, TOY_SET_DT, &
-                            TOY_CFL_C, TOY_LAST_SET_DT, TOY_N_SET_DT_CALLS
+                            TOY_CFL_C, TOY_LAST_SET_DT, TOY_N_SET_DT_CALLS, &
+                            TOY_ON_STEP, TOY_LAST_ON_STEP_T
 IMPLICIT NONE
 
 REAL(KIND=dp),    PARAMETER :: Y0      = 2.0_dp
@@ -115,6 +135,7 @@ ELSE
 END IF
 
 CALL TEST_RUN_ADAPTIVE(N_FAIL)
+CALL TEST_RUN_ADAPTIVE_T_MAX(N_FAIL)
 
 IF (N_FAIL > 0) THEN
   WRITE(*,'(A,I0,A)') "RESULT: FAILED - ", N_FAIL, " check(s) failed"
@@ -182,6 +203,61 @@ SUBROUTINE TEST_RUN_ADAPTIVE(N_FAIL)
     WRITE(*,'(A,I0)') "PASS  run_adaptive_set_dt_call_count  count=", TOY_N_SET_DT_CALLS
   END IF
 END SUBROUTINE TEST_RUN_ADAPTIVE
+
+!> Exercises RUN_ADAPTIVE's T_MAX parameter (added 2026-08-24, for the
+!> real tmax=1000yr production run's own "stop at a target time, not a
+!> guessed step count" need): the loop should stop as soon as T reaches
+!> T_MAX_B, clipping the final step's DT so T lands exactly on T_MAX_B
+!> rather than overshooting -- checked against an independent replica of
+!> the same recurrence (including the clipping), same discipline as
+!> TEST_RUN_ADAPTIVE above. N_STEPS_B is a generous safety cap that
+!> should NOT be exhausted (confirms the T_MAX exit fires first, not the
+!> cap). TOY_ON_STEP/TOY_LAST_ON_STEP_T (not TOY_STATE_T%T_LAST, see its
+!> own comment) is how the actual post-clip T is observed.
+SUBROUTINE TEST_RUN_ADAPTIVE_T_MAX(N_FAIL)
+  INTEGER(KIND=i4), INTENT(INOUT) :: N_FAIL
+  INTEGER(KIND=i4), PARAMETER :: N_STEPS_B = 20
+  REAL(KIND=dp),    PARAMETER :: SAFETY    = 0.5_dp
+  REAL(KIND=dp),    PARAMETER :: T_MAX_B   = 0.1_dp
+  TYPE(TOY_STATE_T) :: STATE_B
+  REAL(KIND=dp)     :: Y_EXP, T_EXP, DT_EXP, ERR
+  INTEGER(KIND=i4)  :: ISTEP, N_ADVANCE_EXP
+
+  STATE_B%Y = Y0
+  TOY_LAST_ON_STEP_T = -1.0_dp
+  CALL RUN_ADAPTIVE(TOY_ADVANCE, STATE_B, TOY_COMPUTE_DT, TOY_SET_DT, N_STEPS_B, &
+    DT_RECOMPUTE_EVERY=1_i4, CFL_SAFETY=SAFETY, T_START=0.0_dp, T_MAX=T_MAX_B, &
+    ON_STEP=TOY_ON_STEP)
+
+  ! Independent replica, including the same clip-final-step-to-T_MAX_B
+  ! logic RUN_ADAPTIVE itself now has.
+  Y_EXP = Y0
+  T_EXP = 0.0_dp
+  N_ADVANCE_EXP = 0
+  DO ISTEP = 1, N_STEPS_B
+    DT_EXP = SAFETY * (TOY_CFL_C / Y_EXP)
+    IF (T_EXP+DT_EXP > T_MAX_B) DT_EXP = T_MAX_B - T_EXP
+    Y_EXP = Y_EXP * (1.0_dp - TOY_K*DT_EXP)
+    T_EXP = T_EXP + DT_EXP
+    N_ADVANCE_EXP = N_ADVANCE_EXP + 1
+    IF (T_EXP >= T_MAX_B) EXIT
+  END DO
+
+  ERR = ABS(STATE_B%Y - Y_EXP)
+  CALL REPORT("run_adaptive_t_max_value", ERR, TOL, N_FAIL)
+
+  ERR = ABS(TOY_LAST_ON_STEP_T - T_MAX_B)
+  CALL REPORT("run_adaptive_t_max_lands_exactly_on_target", ERR, TOL, N_FAIL)
+
+  IF (N_ADVANCE_EXP >= N_STEPS_B) THEN
+    N_FAIL = N_FAIL + 1
+    WRITE(*,'(A,I0,A,I0)') "FAIL  run_adaptive_t_max_stops_before_cap  advances=", &
+      N_ADVANCE_EXP, "  cap=", N_STEPS_B
+  ELSE
+    WRITE(*,'(A,I0,A,I0)') "PASS  run_adaptive_t_max_stops_before_cap  advances=", &
+      N_ADVANCE_EXP, "  cap=", N_STEPS_B
+  END IF
+END SUBROUTINE TEST_RUN_ADAPTIVE_T_MAX
 
 SUBROUTINE REPORT(NAME, ERR, TOL_ARG, N_FAIL)
   CHARACTER(*),     INTENT(IN)    :: NAME
