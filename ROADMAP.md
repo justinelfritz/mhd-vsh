@@ -934,43 +934,86 @@ directly relevant starting points, not blank-slate work:
    I/O layer for e.g. visualization, distinct from a resume checkpoint)
    is still open -- not attempted. Also still open: wiring checkpoint
    support into `mhdvsh_hall_adaptive.f90` (see its own note above).
-4. **Force-free Bessel-Riccati initial conditions** -- unlike the
-   analytical tasks above, this has a solid reference already (Igoshev,
-   Elfritz & Popov 2016, MNRAS 462, 3689, Appendix A; arXiv:1608.08806),
-   so it's an implementation task, not an open derivation: spherical
-   Bessel functions `j_l`/`n_l` (FORTVSH provides none) + a root-finder
-   for the transcendental eigenvalue equation.
-   **Foundation now built (2026-08-29, `bessel_ics` branch), full task
-   still open**: `src/core/spherical_bessel.f90` -- stable `j_n`/`y_n`
-   via Miller's algorithm (downward + closed-form renormalization for
-   `j_n`, plain upward for `y_n`; opposite stability directions, see
-   the module's own header), verified `n=0..20` against the exact
-   Wronskian identity plus closed-form cross-checks, all to ~1e-16
-   relative error. `src/core/initial_conditions.f90` -- a new,
-   general-purpose IC module (tag-dispatched, first tag
-   `'bessel_riccati'`) replacing the ad hoc seed every Hall driver
-   duplicated inline; mode spectrum specified via a NAMELIST file
-   (confirmed with user: zero new dependencies, matches this project's
-   existing minimal-dependency policy). **Composable by design**
-   (confirmed with user, 2026-08-29): `&IC_SELECT` names a LIST of
-   active tags (`N_TAGS`/`TAGS`), and `BUILD_INITIAL_CONDITION`
-   allocates `Phi`/`Psi` once and lets every active tag's builder
-   ACCUMULATE into the same fields, so a future run could layer e.g. a
-   force-free base with a Bessel-Riccati perturbation. Only one real
-   category exists so far, so this is tested today only via the same
-   tag listed twice (confirmed to give exactly double the single-tag
-   result) -- genuine cross-category composition is unexercised until a
-   second category exists, but the plumbing is ready. Example file:
-   `data/ic/bessel_riccati_example.nml`. Both modules tested
-   (`test_spherical_bessel`, `test_initial_conditions`, `ctest` 16/16).
-   **Still missing**: the transcendental-eigenvalue root-finder itself
-   (no root-finder of any kind exists in this codebase yet) and the
-   specific force-free Phi/Psi amplitude coupling -- this pass built
-   general user-specified Riccati-Bessel superpositions, not yet true
-   force-free eigenmodes. Also not yet done: wiring the new module into
-   any driver (proof-of-concept integration deferred), and retrofitting
-   `mhdvsh_hall.f90`/`mhdvsh_hall_adaptive.f90`/`mhdvsh_diffusion.f90`
-   off their duplicated inline seed loops.
+4. ~~**Force-free Bessel-Riccati initial conditions**~~ -- **DONE**
+   (2026-10-15, `bessel_ics` branch). Reference: Igoshev, Elfritz & Popov
+   2016, MNRAS 462, 3689, Appendix A; arXiv:1608.08806 -- fetched and read
+   directly (not reconstructed from memory) to ground this implementation.
+   Foundation (`src/core/spherical_bessel.f90` -- stable `j_n`/`y_n` via
+   Miller's algorithm, verified `n=0..20` against the Wronskian identity;
+   `src/core/initial_conditions.f90` -- tag-dispatched, composable IC
+   module, NAMELIST mode-spectrum input) was built 2026-08-29; this pass
+   adds the actual root-finder and force-free coupling that was missing.
+   - **`src/core/force_free_bessel.f90`** (new): `SOLVE_FORCE_FREE_EIGENVALUE`
+     solves the transcendental eigenvalue equation via bracket-scan +
+     bisection, built entirely on `SPHERICAL_BESSEL_JN_YN` (no new
+     special-function numerics needed). The paper's own outer BC turned
+     out to be a pure amplitude normalization at the surface, not a real
+     vacuum match (confirmed independently -- matches this project's own
+     `PROJECT-MHDVSH-FORCE-FREE-IC` memory note from 2026-08-10) -- using
+     this project's REAL outer BC (Robin(Phi)+Dirichlet(Psi)=0,
+     `boundary_conditions.f90`) instead required re-deriving the
+     eigenvalue equation from scratch, since under the force-free coupling
+     `Psi_l(r)=-mu_l*Phi_l(r)` (paper's Eq. A10, re-verified by independent
+     derivation) the two outer conditions collide into one over-determined
+     system.
+     **Two outer-BC strategies, selectable via a flag (`OUTER_BC`, per
+     user request 2026-10-15 -- the first version only had the first of
+     these, prioritizing exact `Psi(R_out)=0`; the user then pointed out
+     that forces `B_r(R_out)=0` identically, which isn't the generically
+     wanted nonzero-surface-field case, and asked for both as options)**:
+     - `'double_dirichlet'`: `Phi(R_min)=Phi(R_max)=0` exactly -- forces
+       `B_r(R_out)=0` too (since `B_r`~`Phi`), a special case, not the
+       generic multipole. Eigenvalue equation:
+       `j_l(mu*R_max)*y_l(mu*R_min) - j_l(mu*R_min)*y_l(mu*R_max) = 0`,
+       verified against an exact closed form at `l=0`
+       (`mu_n=n*pi/(R_max-R_min)`, `l=0` isn't physically meaningful for a
+       B-field multipole but is a clean independent math check on the
+       shared bracket/bisect root-finding machinery).
+     - `'arbitrary_value'`: the paper's OWN scheme (Eqs. A17-A19) --
+       normalizes `Phi(R_out)` to an arbitrary nonzero value instead,
+       giving the physically typical nonzero-`B_r`-at-the-surface case
+       (cost: `Psi(R_out)` generally nonzero instead). Re-derived in
+       closed form directly from `j_l`/`y_l` (no need for the paper's own
+       `A_l(x)`/`beta_l(x)` polynomial machinery, Eqs. A13-A16 -- solving
+       the 2x2 system `j_l=A_l sin+beta_l cos`, `y_l=-A_l cos+beta_l sin`
+       gives `beta_l(x)=j_l(x)cos(x)+y_l(x)sin(x)` directly):
+       `cos(mu*R_max)*j_l(mu*R_min) + sin(mu*R_max)*y_l(mu*R_min) = 0`.
+       Verified (scipy, standalone) to give BIT-IDENTICAL roots to the
+       paper's own Eq. A19, and (independently, in
+       `test_force_free_bessel.f90` itself, via a different algebraic
+       path) cross-checked against that same A19 form at `l=1,2,3,5,10`.
+       Confirmed to give a genuinely different eigenvalue ladder than
+       `'double_dirichlet'` (not secretly equivalent) and confirmed
+       `Phi(R_max)` actually comes out nonzero (not just "doesn't fail").
+     Both cases: direct BC-residual and eigenvalue-residual checks at
+     `l=1,2,3,5,10` plus a 4-root ladder each (`test_force_free_bessel.f90`,
+     new `ctest` target).
+   - **`src/core/initial_conditions.f90`** extended with a second real
+     tag, `'force_free_bessel'` (own `FF_MODE_T`/`&FORCE_FREE_BESSEL_MODES`
+     group: `L`,`M`,`ROOT_INDEX`,`AMPLITUDE`,`OUTER_BC`) -- unlike
+     `'bessel_riccati'`, always contributes to both `Phi` and `Psi`
+     together (the force-free coupling, not independently settable per
+     field). `READ_IC_NAMELIST`/`BUILD_INITIAL_CONDITION` signatures
+     gained an `FF_MODES` argument (updated at both call sites:
+     `mhdvsh_hall_crust_profile.f90`, `test_initial_conditions.f90`).
+     **Composability finally exercised for real** (previously only
+     self-composed): activating `'bessel_riccati'` + `'force_free_bessel'`
+     together reproduces the exact sum of each tag's own separate result
+     (`test_initial_conditions.f90`'s new check 4). Example files:
+     `data/ic/force_free_bessel_example.nml` (`'double_dirichlet'`),
+     `data/ic/force_free_bessel_arbitrary_value_example.nml`
+     (`'arbitrary_value'`). Both smoke-tested end-to-end through
+     `mhdvsh_hall_crust_profile.f90`'s real driver pipeline (live
+     TOV-derived crust grid, real `eta(r)`/`f_H(r)`) -- stable, energy
+     decreasing smoothly, no blowup, unlike the arbitrary
+     (non-BC-consistent) `'bessel_riccati'` example mode from 2026-09-27.
+   - `ctest`: 17/17 (`force_free_bessel`, `spherical_bessel`,
+     `initial_conditions` all passing).
+   - **Deferred, not done**: retrofitting `mhdvsh_hall.f90`/
+     `mhdvsh_hall_adaptive.f90`/`mhdvsh_diffusion.f90` off their
+     duplicated inline seed loops onto the shared `INITIAL_CONDITIONS`
+     module (only `mhdvsh_hall_crust_profile.f90` is wired so far, since
+     2026-09-27).
 5. **Formal regression test for the energy-balance identity itself** --
    currently only checked informally (comparing a real run's logged
    data by hand/script), not as a `CTest`. Would need a documented,

@@ -1,4 +1,4 @@
-!> Regression test for INITIAL_CONDITIONS. Three checks:
+!> Regression test for INITIAL_CONDITIONS. Four checks:
 !>  (1) READ_IC_NAMELIST round-trip -- write a known namelist file
 !>      (list-valued &IC_SELECT TAGS, confirmed with user 2026-08-29),
 !>      read it back, confirm the parsed IC_TAGS(:)/IC_MODE_T array
@@ -12,15 +12,20 @@
 !>      BUILD_INITIAL_CONDITION with the SAME tag listed twice produces
 !>      exactly double the single-tag result, confirming each active tag
 !>      entry accumulates into the same PHI/PSI rather than the last one
-!>      overwriting. Only one real category exists so far (see the
-!>      module's own header), so this is the closest available check on
-!>      the list-of-tags mechanism until a second category exists.
+!>      overwriting;
+!>  (4) GENUINE cross-category composition (2026-10-15, now that a second
+!>      real category, 'force_free_bessel', exists): activating both tags
+!>      together reproduces the exact sum of each tag's own separate
+!>      result -- the plumbing the module's header previously flagged as
+!>      "untested until a second category exists". Deep correctness of the
+!>      force-free eigenvalue/root-finder itself is test_force_free_bessel's
+!>      job, not this file's.
 PROGRAM TEST_INITIAL_CONDITIONS
 USE KINDS,              ONLY: dp, i4
 USE VSH,                ONLY: YLM_INDEX
 USE GRID_RADIAL,        ONLY: RADIAL_GRID_T, BUILD_RADIAL_GRID
 USE FIELD_TYPES,        ONLY: SPECTRAL_SCALAR_T
-USE INITIAL_CONDITIONS, ONLY: IC_MODE_T, READ_IC_NAMELIST, BUILD_INITIAL_CONDITION
+USE INITIAL_CONDITIONS, ONLY: IC_MODE_T, FF_MODE_T, READ_IC_NAMELIST, BUILD_INITIAL_CONDITION
 IMPLICIT NONE
 
 CHARACTER(LEN=*), PARAMETER :: SCRATCH_PATH = 'test_initial_conditions_scratch.nml'
@@ -29,8 +34,12 @@ INTEGER(KIND=i4), PARAMETER :: N_R = 10_i4, LMAX = 3_i4
 
 CHARACTER(LEN=64), ALLOCATABLE :: IC_TAGS(:)
 TYPE(IC_MODE_T), ALLOCATABLE   :: MODES(:)
+TYPE(IC_MODE_T), ALLOCATABLE   :: NO_MODES(:)
+TYPE(FF_MODE_T), ALLOCATABLE   :: FF_MODES(:)
+TYPE(FF_MODE_T), ALLOCATABLE   :: NO_FF_MODES(:)
 TYPE(RADIAL_GRID_T)            :: RGRID
 TYPE(SPECTRAL_SCALAR_T)        :: PHI, PSI, PHI2, PSI2
+TYPE(SPECTRAL_SCALAR_T)        :: PHI_FF, PSI_FF, PHI_BOTH, PSI_BOTH
 INTEGER(KIND=i4) :: N_FAIL, UNIT, IR, IDX_10, IDX_20
 REAL(KIND=dp)    :: R, EXPECTED_PHI
 
@@ -54,7 +63,7 @@ WRITE(UNIT,'(A)') "  MODE_B       = 0.0, 0.7"
 WRITE(UNIT,'(A)') "/"
 CLOSE(UNIT)
 
-CALL READ_IC_NAMELIST(SCRATCH_PATH, IC_TAGS, MODES)
+CALL READ_IC_NAMELIST(SCRATCH_PATH, IC_TAGS, MODES, FF_MODES)
 
 CALL CHECK_TRUE("n_tags_parsed", SIZE(IC_TAGS) == 1, N_FAIL)
 IF (SIZE(IC_TAGS) == 1) CALL CHECK_TRUE("tag1", TRIM(IC_TAGS(1)) == 'bessel_riccati', N_FAIL)
@@ -91,7 +100,8 @@ MODES(1) = IC_MODE_T(FIELD='phi', L=1_i4, M=0_i4, N=0_i4, X_SCALE=1.0_dp, A=1.0_
 ! (same (l,m) as mode 1 -- tests that modes at the same (field,l,m) accumulate)
 MODES(2) = IC_MODE_T(FIELD='phi', L=1_i4, M=0_i4, N=0_i4, X_SCALE=1.0_dp, A=0.0_dp, B=1.0_dp)
 
-CALL BUILD_INITIAL_CONDITION([CHARACTER(LEN=64) :: 'bessel_riccati'], MODES, RGRID, LMAX, PHI, PSI)
+ALLOCATE(NO_FF_MODES(0))
+CALL BUILD_INITIAL_CONDITION([CHARACTER(LEN=64) :: 'bessel_riccati'], MODES, NO_FF_MODES, RGRID, LMAX, PHI, PSI)
 
 IDX_10 = YLM_INDEX(1_i4, 0_i4)
 DO IR = 1, N_R
@@ -108,11 +118,33 @@ CALL CHECK_TRUE("psi_all_zero", ALL(PSI%COEF == (0.0_dp,0.0_dp)), N_FAIL)
 ! --- (3) Composability: the SAME tag listed twice must accumulate,
 ! not overwrite -- the mechanism a future second category will rely on.
 CALL BUILD_INITIAL_CONDITION([CHARACTER(LEN=64) :: 'bessel_riccati', 'bessel_riccati'], &
-  MODES, RGRID, LMAX, PHI2, PSI2)
+  MODES, NO_FF_MODES, RGRID, LMAX, PHI2, PSI2)
 DO IR = 1, N_R
   CALL CHECK_CLOSE("phi_l1m0_double_tag_accumulates", &
     REAL(PHI2%COEF(IR,IDX_10),KIND=dp), 2.0_dp*REAL(PHI%COEF(IR,IDX_10),KIND=dp), TOL, N_FAIL)
 END DO
+
+! --- (4) Genuine cross-category composition: 'force_free_bessel' is a
+! real second category now. A mode at (l=3,m=2) -- distinct from either
+! bessel_riccati mode's (l,m) above, so its contribution lands in a fresh
+! slot, making the superposition check unambiguous.
+ALLOCATE(NO_MODES(0))
+DEALLOCATE(FF_MODES)
+ALLOCATE(FF_MODES(1))
+FF_MODES(1) = FF_MODE_T(L=3_i4, M=2_i4, ROOT_INDEX=1_i4, AMPLITUDE=1.0_dp)
+
+CALL BUILD_INITIAL_CONDITION([CHARACTER(LEN=64) :: 'force_free_bessel'], &
+  NO_MODES, FF_MODES, RGRID, LMAX, PHI_FF, PSI_FF)
+CALL BUILD_INITIAL_CONDITION([CHARACTER(LEN=64) :: 'bessel_riccati', 'force_free_bessel'], &
+  MODES, FF_MODES, RGRID, LMAX, PHI_BOTH, PSI_BOTH)
+
+CALL CHECK_TRUE("cross_category_phi_matches_sum", &
+  ALL(ABS(PHI_BOTH%COEF - (PHI%COEF+PHI_FF%COEF)) < TOL*MAX(1.0_dp, MAXVAL(ABS(PHI%COEF+PHI_FF%COEF)))), N_FAIL)
+CALL CHECK_TRUE("cross_category_psi_matches_sum", &
+  ALL(ABS(PSI_BOTH%COEF - (PSI%COEF+PSI_FF%COEF)) < TOL*MAX(1.0_dp, MAXVAL(ABS(PSI%COEF+PSI_FF%COEF)))), N_FAIL)
+! The force-free mode must itself have contributed something nonzero --
+! otherwise the sum-check above would pass vacuously.
+CALL CHECK_TRUE("force_free_mode_is_nonzero", MAXVAL(ABS(PHI_FF%COEF)) > TOL, N_FAIL)
 
 IF (N_FAIL > 0) THEN
   WRITE(*,'(A,I0,A)') "RESULT: FAILED - ", N_FAIL, " check(s) failed"

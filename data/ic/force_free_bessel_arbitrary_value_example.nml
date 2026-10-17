@@ -1,0 +1,28 @@
+! Same force-free Bessel-Riccati eigenmode as
+! force_free_bessel_example.nml, but with FF_MODE_OUTER_BC='arbitrary_value'
+! instead of 'double_dirichlet' -- the paper's own outer-condition scheme
+! (Igoshev, Elfritz & Popov 2016, Eqs. A17-A19), normalizing Phi(R_out) to
+! a nonzero value instead of forcing it to zero. This is the physically
+! typical case: B_r (proportional to Phi) comes out NONZERO at the
+! surface, unlike 'double_dirichlet' which forces B_r(R_out)=0 identically.
+! Cost (see force_free_bessel.f90's own header): Psi(R_out) (hence B_tor
+! at the surface) generally comes out nonzero instead, and the exterior
+! vacuum potential isn't guaranteed to decay either way.
+!
+! AMPLITUDE here sets Phi(R_out) itself (the paper's own "V" normalization
+! target, e.g. V=1 in their Eq. A17) -- it does NOT affect which mu is the
+! eigenvalue (that's fixed entirely by L, ROOT_INDEX, and the grid's
+! R_min/R_max), only the overall scale of the resulting field.
+&IC_SELECT
+  N_TAGS = 1
+  TAGS   = 'force_free_bessel'
+/
+
+&FORCE_FREE_BESSEL_MODES
+  N_FF_MODES          = 1
+  FF_MODE_L           = 1
+  FF_MODE_M           = 0
+  FF_MODE_ROOT_INDEX  = 1
+  FF_MODE_AMPLITUDE   = 1.0
+  FF_MODE_OUTER_BC    = 'arbitrary_value'
+/

@@ -76,6 +76,7 @@ add_library(mhdvsh_core STATIC
   src/core/tov_solver.f90
   src/core/crust_conductivity.f90
   src/core/spherical_bessel.f90
+  src/core/force_free_bessel.f90
   src/core/initial_conditions.f90
 )
 set_target_properties(mhdvsh_core PROPERTIES
@@ -208,6 +209,44 @@ set_target_properties(mhdvsh_hall_crust_profile_lmax_test PROPERTIES
 )
 target_link_libraries(mhdvsh_hall_crust_profile_lmax_test PRIVATE mhdvsh_core)
 
+# Byte-for-byte copy of mhdvsh_hall_crust_profile, LMAX raised 30->50 --
+# one-off verification build (2026-10-16) testing whether the l=1
+# force-free 10^12G dipole run's growing energy-balance residual is a
+# spectral-truncation effect (see the driver's own header). Not a
+# permanent feature; delete once the question is settled.
+add_executable(mhdvsh_hall_crust_profile_lmax50 EXCLUDE_FROM_ALL
+  ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall_crust_profile_lmax50.f90)
+set_target_properties(mhdvsh_hall_crust_profile_lmax50 PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_crust_profile_lmax50"
+)
+target_link_libraries(mhdvsh_hall_crust_profile_lmax50 PRIVATE mhdvsh_core)
+
+# N_R raised 40->60, radial grid geometrically clustered toward R_MAX
+# (GRID_RADIAL::RADIAL_GEOMETRIC_OUTER, Q=0.85) instead of uniform --
+# one-off verification build (2026-10-16) testing whether the l=1
+# force-free 10^12G dipole run's growing energy-balance residual is a
+# radial grid-resolution effect (see the driver's own header). Not a
+# permanent feature; delete once the question is settled.
+add_executable(mhdvsh_hall_crust_profile_geogrid EXCLUDE_FROM_ALL
+  ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall_crust_profile_geogrid.f90)
+set_target_properties(mhdvsh_hall_crust_profile_geogrid PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_crust_profile_geogrid"
+)
+target_link_libraries(mhdvsh_hall_crust_profile_geogrid PRIVATE mhdvsh_core)
+
+# Radial grid built directly from the live TOV profile's own R(:) array
+# (GRID_RADIAL::BUILD_RADIAL_GRID_FROM_ARRAY), restricted to the crust
+# extent, instead of a synthetic uniform or geometric-ratio grid -- N_R
+# comes out to 187 for this star. One-off verification build
+# (2026-10-16), see the driver's own header. Not a permanent feature;
+# delete once the question is settled.
+add_executable(mhdvsh_hall_crust_profile_tovgrid EXCLUDE_FROM_ALL
+  ${MHDVSH_HALL_SOURCES} app/mhdvsh_hall_crust_profile_tovgrid.f90)
+set_target_properties(mhdvsh_hall_crust_profile_tovgrid PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_hall_crust_profile_tovgrid"
+)
+target_link_libraries(mhdvsh_hall_crust_profile_tovgrid PRIVATE mhdvsh_core)
+
 # dt_hall convergence check for HALL_POYNTING_FLUX_RATE against a REAL,
 # multi-mode-coupled checkpoint state (see the driver's own header) --
 # one-off verification build, 2026-08-29. Not a permanent feature.
@@ -237,6 +276,49 @@ set_target_properties(mhdvsh_checkpoint_boundary_check PROPERTIES
   Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_checkpoint_boundary_check"
 )
 target_link_libraries(mhdvsh_checkpoint_boundary_check PRIVATE mhdvsh_core)
+
+# Dumps a force-free Bessel-Riccati IC's radial Phi/Psi/B_r profile, both
+# inside the star (real eigenmode solution) and outside it (analytic
+# vacuum continuation) -- one-off diagnostic build, 2026-10-16, per user
+# request for a plotted l=1, ~10**12 G surface-field profile.
+add_executable(mhdvsh_force_free_profile EXCLUDE_FROM_ALL
+  app/mhdvsh_force_free_profile.f90)
+set_target_properties(mhdvsh_force_free_profile PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_force_free_profile"
+)
+target_link_libraries(mhdvsh_force_free_profile PRIVATE mhdvsh_core)
+
+# Compares the old ad hoc seed IC against the new l=1 force-free dipole
+# IC's B_r(r)/Rmag(r) on the same production grid -- one-off diagnostic
+# build, 2026-10-16, testing why the new IC's Hall-CFL dt is so much
+# smaller (field concentrated near the surface, where F_Hall/Rmag are
+# most extreme, instead of vanishing there like the old seed).
+add_executable(mhdvsh_ic_rmag_compare EXCLUDE_FROM_ALL
+  app/mhdvsh_ic_rmag_compare.f90)
+set_target_properties(mhdvsh_ic_rmag_compare PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_ic_rmag_compare"
+)
+target_link_libraries(mhdvsh_ic_rmag_compare PRIVATE mhdvsh_core)
+
+# Rmag comparison on the fine results/eos_comparison/ radial grid --
+# constant B_max=1.912 (the existing reference plots' own convention) vs
+# the real new l=1 force-free dipole's own B_r(r) -- one-off diagnostic
+# build, 2026-10-16.
+add_executable(mhdvsh_ic_rmag_eos_compare EXCLUDE_FROM_ALL
+  app/mhdvsh_ic_rmag_eos_compare.f90)
+set_target_properties(mhdvsh_ic_rmag_eos_compare PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_ic_rmag_eos_compare"
+)
+target_link_libraries(mhdvsh_ic_rmag_eos_compare PRIVATE mhdvsh_core)
+
+# B_r(r) at t=0 vs the latest checkpoint for the l=1 1e12G force-free
+# production run -- one-off diagnostic build, 2026-10-16.
+add_executable(mhdvsh_br_snapshot_compare EXCLUDE_FROM_ALL
+  app/mhdvsh_br_snapshot_compare.f90)
+set_target_properties(mhdvsh_br_snapshot_compare PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/mhdvsh_br_snapshot_compare"
+)
+target_link_libraries(mhdvsh_br_snapshot_compare PRIVATE mhdvsh_core)
 
 # ── Artifacts (plots/data regenerated automatically with every build) ───────
 # Directory convention: artifacts/<regime>/<diagnostic>/{data,plots}/ -- one
@@ -348,6 +430,13 @@ set_target_properties(test_radial_operators PROPERTIES
 target_link_libraries(test_radial_operators PRIVATE mhdvsh_core)
 add_test(NAME radial_operators COMMAND test_radial_operators)
 
+add_executable(test_grid_radial test/test_grid_radial.f90)
+set_target_properties(test_grid_radial PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_grid_radial"
+)
+target_link_libraries(test_grid_radial PRIVATE mhdvsh_core)
+add_test(NAME grid_radial COMMAND test_grid_radial)
+
 add_executable(test_timestepper test/test_timestepper.f90)
 set_target_properties(test_timestepper PROPERTIES
   Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_timestepper"
@@ -445,3 +534,13 @@ set_target_properties(test_initial_conditions PROPERTIES
 )
 target_link_libraries(test_initial_conditions PRIVATE mhdvsh_core)
 add_test(NAME initial_conditions COMMAND test_initial_conditions)
+
+# test_force_free_bessel's checks (l=0 closed-form root, eigenvalue
+# residual, double-Dirichlet BC satisfaction, root ladder) are all
+# computed in-test -- no reference file, no WORKING_DIRECTORY needed.
+add_executable(test_force_free_bessel test/test_force_free_bessel.f90)
+set_target_properties(test_force_free_bessel PROPERTIES
+  Fortran_MODULE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mod/test_force_free_bessel"
+)
+target_link_libraries(test_force_free_bessel PRIVATE mhdvsh_core)
+add_test(NAME force_free_bessel COMMAND test_force_free_bessel)
