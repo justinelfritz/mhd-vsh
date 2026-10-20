@@ -127,21 +127,32 @@ INTEGER(KIND=i4), PARAMETER :: N_R_DEFAULT = 50
 ! earlier EOS-derived equidistribution/grid_path machinery as the
 ! default path (grid_path remains available as an explicit alternative,
 ! see the header note below).
-! @note empirical stability scan at N_R=50, cfl_safety=0.5, 50-step
-!   smoke tests of this exact IC (results below, min/max dr in km):
-!     Q=0.95 (5.8e-3--6.9e-2): clean energy decrease.
-!     Q=0.90 (8.1e-4--1.3e-1): clean energy decrease.
-!     Q=0.87 (2.0e-4--1.6e-1): clean energy decrease.
-!     Q=0.86 (1.3e-4--1.8e-1): energy GREW (1.03e42 vs 7.68e41 erg) --
-!       not yet a BLOWUP_FACTOR-flagged blowup, but clearly past the
-!       edge of good behavior.
-!     Q=0.85 (7.7e-5--1.9e-1): outright BLOWUP within 50 steps.
-!   So the instability boundary sits between Q=0.86 and 0.87. Q=0.88
-!   below keeps a safety margin on the stable side of that boundary
-!   while still resolving the near-surface layer far better than the
-!   old uniform N_R=40 grid (which missed the Rmag spike by ~4 orders
-!   of magnitude, see RADIAL_GEOMETRIC_OUTER's own module header).
-REAL(KIND=dp),    PARAMETER :: GRID_STRETCH_PARAM = 0.88_dp
+! @note (2026-10-17 revision) Q re-tuned jointly with THETA_MAX_TRUNCATE
+!   (see that PARAMETER's own note below) rather than in isolation. The
+!   original Q=0.88 was found against the OLD theta_max=1.3 domain, where
+!   F_Hall(r) varies by ~560x within the single outermost uniform cell --
+!   an aggressive stretch was required just to survive that. With
+!   theta_max now tightened to 0.2, the domain is cut short of most of
+!   that divergence (remaining variation within one uniform cell: only
+!   ~35x), so a much gentler Q resolves it. Empirical sweep at N_R=50,
+!   theta_max=0.2, cfl_safety=0.5, this exact IC (dt0 via the real
+!   HALL_COURANT_TIMESTEP, and F_Hall variation within the single
+!   outermost grid cell as a resolution check -- a "bulk" interior cell
+!   varies by ~1.25x, i.e. that's what "resolved" looks like here):
+!     Q=0.97: dt0=2.89e-2 yr, outer-cell F_Hall variation=6.1x
+!     Q=0.95: dt0=1.31e-2 yr, outer-cell F_Hall variation=3.0x
+!     Q=0.93: dt0=5.34e-3 yr, outer-cell F_Hall variation=1.8x
+!     Q=0.90: dt0=1.32e-3 yr, outer-cell F_Hall variation=1.2x (matches
+!       the bulk-cell baseline -- genuinely resolved, not just stable)
+!     Q=0.88: dt0=5.09e-4 yr, outer-cell F_Hall variation=1.1x
+!     Q=0.85: dt0=1.16e-4 yr, outer-cell F_Hall variation=1.0x
+!   Q=0.90 is the chosen value: the smallest stretch (largest dt0, i.e.
+!   cheapest) whose outer-cell resolution already matches the bulk-cell
+!   baseline -- pushing Q lower buys negligible further resolution at an
+!   increasing dt0 cost. Separately confirmed stable (clean energy
+!   decrease, no blowup) via a real short production-driver run at this
+!   exact (theta_max=0.2, N_R=50, Q=0.90) configuration.
+REAL(KIND=dp),    PARAMETER :: GRID_STRETCH_PARAM = 0.90_dp
 INTEGER(KIND=i4), PARAMETER :: LMAX    = 30
 REAL(KIND=dp),    PARAMETER :: NBAR_CENTRAL = 0.5447307_dp   ! fm**-3, M=1.40 reference star, matches mhdvsh_tov.f90
 CHARACTER(LEN=*), PARAMETER :: EOS_PATH = 'data/eos/APR_EOS_Cat.dat'
@@ -165,7 +176,33 @@ REAL(KIND=dp),    PARAMETER :: RHOL_CGS = 2.2E14_dp            ! core-crust boun
 ! -- see this file's own header) but drops Rmag at the new boundary by
 ! ~12,300x (126 vs 1.5e6 at the true surface) -- empirically found to
 ! relieve the dt_hall~1.6e-7 yr floor the untruncated grid forced.
-REAL(KIND=dp),    PARAMETER :: THETA_MAX_TRUNCATE = 1.3_dp
+!
+! @note (2026-10-17 revision, per user request, option 2 of the two
+!   truncation proposals discussed that session): tightened 1.3->0.2.
+!   The original 1.3 was picked by eyeballing a dr(r) knee in a plot,
+!   not from a feasibility bound -- re-evaluated this session by
+!   directly sweeping theta_max against the real Hall-CFL dt0 (via
+!   HALL_COURANT_TIMESTEP, same IC, N_R=40 uniform baseline):
+!     theta_max=1.3 (current->old): R_trunc=11.5621 km, dt0=3.82e-3 yr
+!     theta_max=0.6:                R_trunc=11.5606 km, dt0=1.34e-2 yr
+!     theta_max=0.3:                R_trunc=11.5579 km, dt0=4.44e-2 yr
+!     theta_max=0.2 (chosen):       R_trunc=11.5552 km, dt0=9.35e-2 yr
+!     theta_max=0.1:                R_trunc=11.5470 km, dt0=3.67e-1 yr
+!   Moving from 1.3 to 0.2 buys a ~25x larger dt0 at the cost of only
+!   ~7m (0.55%) of crust width -- the F_Hall divergence is extremely
+!   localized right at the true surface, so this is a cheap trade, not
+!   a real sacrifice of physics (theta=0.2 is still comfortably inside
+!   the degenerate-electron-gas regime these conductivity formulas
+!   assume -- nowhere near the theta~1 validity boundary). Did NOT push
+!   to 0.1: diminishing marginal width savings for a given dt0 gain, and
+!   0.2 already brings wall-clock projections (corrected for the ~37x
+!   dt0->dt_avg shrinkage observed over a real run, see
+!   results/force_free_l1_1e12G_1000yr/'s own checkpoint) from ~113
+!   wall-clock days (at 1.3) down to ~4.6 days for a 1000 simulated-year
+!   target -- judged a reasonable place to stop without crowding the
+!   degeneracy boundary unnecessarily. GRID_STRETCH_PARAM above was then
+!   re-tuned jointly against this new, shorter domain -- see its own note.
+REAL(KIND=dp),    PARAMETER :: THETA_MAX_TRUNCATE = 0.2_dp
 REAL(KIND=dp),    PARAMETER :: T_KELVIN = 1.0E9_dp             ! isothermal-crust default, matches every prior driver
 INTEGER(KIND=i4), PARAMETER :: CHECKPOINT_EVERY = 200          ! coarser than mhdvsh_hall.f90's 50 -- long production run
 INTEGER(KIND=i4), PARAMETER :: DATA_UNIT = 21
@@ -196,7 +233,7 @@ CHARACTER(LEN=1024) :: DATA_PATH, ENERGY_L_PATH, CHECKPOINT_PATH, RESUME_PATH, I
 CHARACTER(LEN=16) :: COL_LABEL
 CHARACTER(LEN=256) :: SEED_IC_DESCRIPTION
 LOGICAL :: WRITE_DATA, WRITE_ENERGY_L, WRITE_CHECKPOINT_FLAG, RESUMING, NEED_ON_STEP, BLOWN_UP
-LOGICAL :: USE_IC_NAMELIST, USE_GRID_FILE
+LOGICAL :: USE_IC_NAMELIST, USE_GRID_FILE, FORCE_ZERO_PSI_IC
 INTEGER(KIND=i4) :: ISTEP_START, N_STEPS_REMAINING
 INTEGER(KIND=i4) :: N_R_CK, LMAX_CK
 REAL(KIND=dp)    :: T_START, R_MIN_CK, R_MAX_CK
@@ -298,9 +335,23 @@ ELSE
   USE_IC_NAMELIST = (COMMAND_ARGUMENT_COUNT() >= 8)
   IF (USE_IC_NAMELIST) THEN
     CALL GET_COMMAND_ARGUMENT(8, IC_NAMELIST_PATH)
-    CALL READ_IC_NAMELIST(TRIM(IC_NAMELIST_PATH), IC_TAGS, IC_MODES, IC_FF_MODES)
+    CALL READ_IC_NAMELIST(TRIM(IC_NAMELIST_PATH), IC_TAGS, IC_MODES, IC_FF_MODES, &
+      FORCE_ZERO_PSI=FORCE_ZERO_PSI_IC)
     CALL BUILD_INITIAL_CONDITION(IC_TAGS, IC_MODES, IC_FF_MODES, RGRID, LMAX, STATE%PHI, STATE%PSI)
+    IF (FORCE_ZERO_PSI_IC) THEN
+      ! Strips the force-free eigenmode's own Psi=-mu*Phi companion (see
+      ! INITIAL_CONDITIONS::READ_IC_NAMELIST's own note on ZERO_PSI,
+      ! added 2026-10-17 per user request) -- keeps the force-free
+      ! radial PHI shape as a physically-motivated poloidal seed, but
+      ! deliberately makes it a non-equilibrium initial condition with
+      ! an exactly zero toroidal component, so any toroidal energy that
+      ! later appears is unambiguously Hall-induced, not already present
+      ! in the seed.
+      STATE%PSI%COEF = (0.0_dp, 0.0_dp)
+    END IF
     WRITE(SEED_IC_DESCRIPTION,'(A,A)') 'INITIAL_CONDITIONS namelist: ', TRIM(IC_NAMELIST_PATH)
+    IF (FORCE_ZERO_PSI_IC) WRITE(SEED_IC_DESCRIPTION,'(A,A)') TRIM(SEED_IC_DESCRIPTION), &
+      ' (PSI forced to zero post-construction)'
   ELSE
     CALL ALLOC_SPECTRAL_SCALAR(STATE%PHI, N_R, LMAX)
     CALL ALLOC_SPECTRAL_SCALAR(STATE%PSI, N_R, LMAX)
