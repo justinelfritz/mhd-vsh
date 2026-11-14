@@ -116,17 +116,37 @@ CONTAINS
 !>   entry must be a known tag -- fails loud (STOP) on typos or a
 !>   not-yet-implemented category, rather than silently doing nothing in
 !>   BUILD_INITIAL_CONDITION later.
-SUBROUTINE READ_IC_NAMELIST(PATH, IC_TAGS, MODES, FF_MODES)
+!> @param ZERO_PSI Optional output (default .FALSE. if the file's own
+!>   &IC_SELECT doesn't set it): true if the file requests PSI be forced
+!>   to zero after every tag's builder has run. Added 2026-10-17, per
+!>   user request, for 'force_free_bessel' specifically -- that builder
+!>   ALWAYS couples Psi_l=-mu_l*Phi_l (see this module's own header),
+!>   so a genuinely force-free field can never have zero toroidal
+!>   component (except the trivial, current-free mu=0 case). This flag
+!>   lets a caller deliberately strip that companion AFTER construction
+!>   (keeping the force-free eigenmode's own Phi(r) shape, a physically
+!>   motivated poloidal seed) to get a clean zero-toroidal baseline --
+!>   e.g. to isolate Hall-induced toroidal growth from t=0, rather than
+!>   watching an already-nonzero equilibrium toroidal component evolve.
+!>   Deliberately a POST-construction override, not a per-tag option:
+!>   applying it is the CALLER's job (BUILD_INITIAL_CONDITION itself
+!>   stays a pure "accumulate every active tag's contribution" dispatch,
+!>   unaware of this), so a caller that ignores this argument gets
+!>   exactly the old, unmodified behavior (non-breaking).
+SUBROUTINE READ_IC_NAMELIST(PATH, IC_TAGS, MODES, FF_MODES, FORCE_ZERO_PSI)
   CHARACTER(LEN=*),              INTENT(IN)  :: PATH
   CHARACTER(LEN=64), ALLOCATABLE,INTENT(OUT) :: IC_TAGS(:)
   TYPE(IC_MODE_T), ALLOCATABLE,  INTENT(OUT) :: MODES(:)
   TYPE(FF_MODE_T), ALLOCATABLE,  INTENT(OUT) :: FF_MODES(:)
+  LOGICAL, OPTIONAL,             INTENT(OUT) :: FORCE_ZERO_PSI
 
   ! Fixed-size buffers: Fortran NAMELIST arrays need a known declared
   ! size before the READ (no auto-allocation). TAGS is the namelist's
   ! own user-facing variable name (file syntax: `TAGS = 'a', 'b'`),
-  ! distinct from the IC_TAGS(:) output argument above.
+  ! distinct from the IC_TAGS(:) output argument above. ZERO_PSI is
+  ! likewise the file-facing name for FORCE_ZERO_PSI below.
   CHARACTER(LEN=64) :: TAGS(MAX_TAGS)
+  LOGICAL           :: ZERO_PSI
   INTEGER(KIND=i4)  :: UNIT, N_TAGS, N_MODES, I, ITAG
 
   CHARACTER(LEN=8) :: MODE_FIELD(MAX_MODES)
@@ -139,7 +159,7 @@ SUBROUTINE READ_IC_NAMELIST(PATH, IC_TAGS, MODES, FF_MODES)
   CHARACTER(LEN=32) :: FF_MODE_OUTER_BC(MAX_MODES)
   LOGICAL           :: FF_MODE_ALLOW_HIGHER_ROOTS(MAX_MODES)
 
-  NAMELIST /IC_SELECT/ N_TAGS, TAGS
+  NAMELIST /IC_SELECT/ N_TAGS, TAGS, ZERO_PSI
   NAMELIST /BESSEL_RICCATI_MODES/ N_MODES, MODE_FIELD, MODE_L, MODE_M, MODE_N, &
     MODE_X_SCALE, MODE_A, MODE_B
   NAMELIST /FORCE_FREE_BESSEL_MODES/ N_FF_MODES, FF_MODE_L, FF_MODE_M, &
@@ -147,6 +167,7 @@ SUBROUTINE READ_IC_NAMELIST(PATH, IC_TAGS, MODES, FF_MODES)
 
   N_TAGS = 0_i4
   TAGS = ''
+  ZERO_PSI = .FALSE.
   N_MODES = 0_i4
   MODE_FIELD = 'phi'
   MODE_L = 0_i4; MODE_M = 0_i4; MODE_N = 0_i4
@@ -227,6 +248,8 @@ SUBROUTINE READ_IC_NAMELIST(PATH, IC_TAGS, MODES, FF_MODES)
     ALLOCATE(FF_MODES(0))
   END IF
   CLOSE(UNIT)
+
+  IF (PRESENT(FORCE_ZERO_PSI)) FORCE_ZERO_PSI = ZERO_PSI
 END SUBROUTINE READ_IC_NAMELIST
 
 !> Allocates PHI/PSI once (size N_R=RGRID%N, degree LMAX), then lets

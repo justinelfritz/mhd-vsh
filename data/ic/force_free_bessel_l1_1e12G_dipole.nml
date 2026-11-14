@@ -14,12 +14,23 @@
 !   AMPLITUDE = B_r_target * R_out**2 / 2 = 1.0 * R_out**2 / 2.
 ! R_out here is this driver's own live TOV-derived, theta-truncated crust
 ! surface (CRUST_CONDUCTIVITY::FIND_TRUNCATION_RADIUS, T_KELVIN=1e9K,
-! THETA_MAX=1.3 -- matches app/mhdvsh_hall_crust_profile.f90 exactly),
-! computed once (2026-10-16) as R_out=11.56212283471523 km, giving
-! AMPLITUDE=66.84134222252167 -- hardcoded here (same convention already
+! THETA_MAX=0.2 -- matches app/mhdvsh_hall_crust_profile.f90 exactly as
+! of the 2026-10-17 THETA_MAX_TRUNCATE revision, see that file's own
+! note), computed as R_out=11.5551663608736987 km, giving
+! AMPLITUDE=66.76093481373356 -- hardcoded here (same convention already
 ! used by bessel_riccati_example.nml's own X_SCALE) since the EOS/TOV
 ! inputs this depends on (NBAR_CENTRAL, data/eos/APR_EOS_Cat.dat) are
 ! fixed constants, not expected to change run to run.
+! @note (2026-10-17) values above superseded the original THETA_MAX=1.3
+!   derivation (R_out=11.56212283471523 km, AMPLITUDE=66.84134222252167)
+!   when THETA_MAX_TRUNCATE moved to 0.2 -- update again if that
+!   PARAMETER ever changes again, same convention.
+! @note (correction) This IS a genuine force-free field: BUILD_FORCE_FREE_
+!   BESSEL couples Psi_l=-mu_l*Phi_l (the force-free condition itself),
+!   so PSI is NOT zero here -- E_toroidal(t=0) is a real, nonzero part of
+!   this equilibrium, not something that grows from a clean baseline. For
+!   a deliberately poloidal-only (PSI forced to zero) variant of this
+!   exact seed, see force_free_bessel_l1_1e12G_dipole_poloidal_only.nml.
 &IC_SELECT
   N_TAGS = 1
   TAGS   = 'force_free_bessel'
@@ -30,6 +41,6 @@
   FF_MODE_L           = 1
   FF_MODE_M           = 0
   FF_MODE_ROOT_INDEX  = 1
-  FF_MODE_AMPLITUDE   = 66.84134222252167
+  FF_MODE_AMPLITUDE   = 66.76093481373356
   FF_MODE_OUTER_BC    = 'arbitrary_value'
 /
