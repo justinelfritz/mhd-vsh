@@ -98,6 +98,7 @@
 !> POWER_UNIT_ERG_PER_S applied only at this reporting layer).
 PROGRAM MHDVSH_HALL_CRUST_PROFILE
 USE, INTRINSIC :: IEEE_ARITHMETIC, ONLY: IEEE_VALUE, IEEE_QUIET_NAN, IEEE_IS_NAN
+USE, INTRINSIC :: ISO_C_BINDING, ONLY: C_INT
 USE KINDS,              ONLY: dp, i4
 USE VSH,                ONLY: YLM_INDEX
 USE GRID_RADIAL,        ONLY: RADIAL_GRID_T, BUILD_RADIAL_GRID, BUILD_RADIAL_GRID_FROM_FILE, &
@@ -240,6 +241,28 @@ REAL(KIND=dp)    :: T_START, R_MIN_CK, R_MAX_CK
 CHARACTER(LEN=64), ALLOCATABLE :: IC_TAGS(:)
 TYPE(IC_MODE_T),   ALLOCATABLE :: IC_MODES(:)
 TYPE(FF_MODE_T),   ALLOCATABLE :: IC_FF_MODES(:)
+
+INTERFACE
+  SUBROUTINE OPENBLAS_SET_NUM_THREADS(NUM_THREADS) BIND(C, NAME='openblas_set_num_threads')
+    IMPORT :: C_INT
+    INTEGER(KIND=C_INT), VALUE :: NUM_THREADS
+  END SUBROUTINE OPENBLAS_SET_NUM_THREADS
+END INTERFACE
+
+! Hygiene fix (2026-11-14): this driver's per-step cost is genuinely
+! compute-bound in HALL_INDUCTION's mode-coupling RHS evaluation, not
+! BLAS/LAPACK work -- confirmed empirically via strace (write() syscalls
+! are 0.01% of traced time) and a controlled before/after timing
+! comparison (OPENBLAS_NUM_THREADS=1 cuts sys time ~95% and total
+! CPU-seconds ~46%, but wall-clock time for a single run is unchanged --
+! OpenBLAS's thread pool was spinning on otherwise-idle cores, not on
+! the critical path, for these small N_R~50 matrices). Pinning to 1
+! thread here does not speed up any single run, but stops that thread
+! pool from burning CPU across every other core for no benefit -- matters
+! when running multiple instances of this driver concurrently on a
+! shared machine. Call this BEFORE any BLAS/LAPACK-touching routine
+! (SOLVE_TOV_STAR included).
+CALL OPENBLAS_SET_NUM_THREADS(1_C_INT)
 
 IF (COMMAND_ARGUMENT_COUNT() < 2) THEN
   WRITE(*,'(A)') 'Usage: mhdvsh_hall_crust_profile <n_steps> <n_sub> [cfl_safety] ' // &

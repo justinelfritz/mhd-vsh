@@ -1,0 +1,34 @@
+! Force-free Bessel-Riccati l=1 (dipole) eigenmode, SAME radial Phi(r)
+! shape and amplitude calibration as force_free_bessel_l1_1e12G_dipole.nml
+! (see that file's own header for the derivation), but with ZERO_PSI=.TRUE.
+! added below (2026-10-17, per user request) to strip the eigenmode's own
+! Psi=-mu*Phi force-free companion after construction -- see
+! INITIAL_CONDITIONS::READ_IC_NAMELIST's own header note on ZERO_PSI, and
+! app/mhdvsh_hall_crust_profile.f90's handling of FORCE_ZERO_PSI_IC.
+!
+! Purpose (per user request): a purely poloidal (B_toroidal(t=0)=0 exactly)
+! l=1 seed, built from the same force-free radial profile used elsewhere in
+! this project, so that (a) the vacuum outer BC (Robin on Phi, Dirichlet on
+! Psi -- boundary_conditions.f90) can be checked against a clean baseline,
+! and (b) any toroidal field appearing over the run is unambiguously
+! Hall-induced, not already present in the seed.
+!
+! R_out/AMPLITUDE: theta_max=0.2 truncated crust surface,
+! R_out=11.5551663608736987 km, AMPLITUDE=66.76093481373356 -- identical
+! derivation and values to force_free_bessel_l1_1e12G_dipole.nml (see that
+! file for the full amplitude derivation); update both files together if
+! THETA_MAX_TRUNCATE or the TOV/EOS inputs ever change.
+&IC_SELECT
+  N_TAGS    = 1
+  TAGS      = 'force_free_bessel'
+  ZERO_PSI  = .TRUE.
+/
+
+&FORCE_FREE_BESSEL_MODES
+  N_FF_MODES          = 1
+  FF_MODE_L           = 1
+  FF_MODE_M           = 0
+  FF_MODE_ROOT_INDEX  = 1
+  FF_MODE_AMPLITUDE   = 66.76093481373356
+  FF_MODE_OUTER_BC    = 'arbitrary_value'
+/
